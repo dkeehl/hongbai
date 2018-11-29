@@ -2,7 +2,7 @@ require 'tk'
 require 'tkextlib/tile'
 require 'bindata'
 require_relative 'cpu'
-require_relative 'lib/assembler'
+require_relative 'assembler'
 
 class TestCpu < Cpu
   def initialize
@@ -111,7 +111,7 @@ class Memviewer
     attr_reader :cycle, :a, :x, :y, :p, :pc, :sp, :instruction
   end
   #register status
-  status = {'cycle' => @cycle,
+  @status = {'cycle' => @cycle,
             'a' => @a,
             'x' => @x,
             'y' => @y,
@@ -160,7 +160,7 @@ class Memviewer
   end
 
   ##buttons
-  bottons = [
+  @bottons = [
     Tk::Tile::Button.new(@root) {text 'Assemble'; command {Memviewer.assemble} }.grid(:sticky => 'w'),
     Tk::Tile::Button.new(@root) {text 'Run by step'; command {Memviewer.run_by_step} }.grid(:sticky => 'w'),
     Tk::Tile::Button.new(@root) {text 'Run'; command {Memviewer.run} }.grid(:sticky => 'w')
@@ -189,7 +189,7 @@ class Memviewer
 
   @mem_data = Array.new(16 * 16) { Tk::Tile::Label.new(data_map) {width 4; anchor 'center'; background 'white'} }
   @mem_data.each_with_index do |l, i|
-    addr = @page << 8 | i
+    #addr = @page << 8 | i
     l.textvariable = @m[i]
     l.grid(:row => i / 16 + 1, :column => i % 16 + 1)
   end
@@ -292,4 +292,3 @@ class Memviewer
   tag_pc
   Tk.mainloop
 end
-
