@@ -1,4 +1,5 @@
 require 'sdl2'
+require 'matrix'
 
 module Hongbai
   SCREEN_WIDTH = 256
@@ -41,10 +42,14 @@ module Hongbai
       @next_scanline_cycle = CYCLES_PER_SCANLINE
       @scanline = 0
       @regs = Regs.new()
+      @oam = Oam.new()
+      @oam2 = Oam2.new()
 
       # Upper left corner of the visiable area.
       @scroll_x = 0
       @scroll_y = 0
+
+      @pattern_table = Matrix.build(512, 4, &:build_tile)
     end
 
     # step : Ppu -> Int -> [Bool, Bool]
@@ -77,6 +82,26 @@ module Hongbai
     end
 
     private
+      # Ppu -> Integer -> Integer -> Tile
+      def build_tile(row, col)
+        # The pattern table lays in the VRAM from $0000 to $1fff,
+        # including 512 tiles, each of 16 bytes, devided into two
+        # 8 bytes planes.
+        plane0 = Array.new(8) { |i| @vram.load(row * 16 + i) }
+        plane1 = Array.new(8) { |i| @vram.load(row * 16 + 8 + i) }
+        # make either plane a 8*8 matrix of bit
+        plane0 = Matrix.build(8) { |r, c| (plane0[r] >> (7 - c)) & 1 }
+        plane1 = Matrix.build(8) { |r, c| (plane1[r] >> (7 - c)) & 1 }
+        attribute = Matrix.build(8) { col }
+        # plane0 controls the 0 bit of color index,
+        # plane1 controls the 1 bit whild the attribute controls the higher 2 bits
+        tile = plane0 + plane1 * Matrix.scalar(8, 2) + attribute * Matrix.scalar(8, 4)
+        tile.map do |i| 
+          r, g, b = get_color(i & 0x3f)
+          Color.new(r, g, b)
+        end
+      end
+
       # Ppu -> Bool
       def scanline_irq?
         # TODO
@@ -90,11 +115,10 @@ module Hongbai
       # Ppu -> Nil
       def render_scanline
         backdrop = get_backdrop_color
-        visible_sprites = compute_visible_sprites
 
         (0...SCREEN_WIDTH).each do |x|
           background = get_background_pixel(x)
-          sprite_color = get_sprite_pixel(visible_sprites, x, background)
+          sprite_color = get_sprite_pixel(x, background)
           color = sprite_color | background | backdrop
           put_pixel(x, color)
         end
@@ -144,30 +168,9 @@ module Hongbai
         tile, attribute = fetch_nametable_entry(x, y)
         return if tile.zero?
 
-        # Translate the tile number into a VRAM address
-        #
-        # DCBA98 76543210
-        # ---------------
-        # OHRRRR CCCCPTTT
-        # |||||| |||||+++- T: Fine Y offset, the row number within a tile
-        # |||||| ||||+---- P: Bit plane (0: "lower"; 1: "upper")
-        # |||||| ++++----- C: Tile column
-        # ||++++ --------- R: Tile row
-        # |+---- --------- H: Sprite table half (0; "left"; 1: "right")
-        # +----- --------- O: Pattern table address (0: $0000-$0fff; 1: $1000-$1fff)
-        #
-        addr = (tile << 4) | (y % 8) | @regs.background_pattern_table_addr
-        #            +          +           +
-        #           R C         T           O
-        plane0 = @vram.load(addr)
-        plane1 = @vram.load(addr + 8)
-        bit0 = (plane0 >> (7 - (x % 8))) & 1
-        bit1 = (plane1 >> (7 - (x % 8))) & 1
-
-        color_offset = (attribute << 2) | (bit1 << 1) | bit0
-        index = @vram.load(0x3f00 + color_offset) & 0x3f
-        r, g, b = get_color(index)
-        BGColor.new(r, g, b)
+        pattern = @pattern_table[@regs.bg_pattern_table_addr * 256 + tile, attribute]
+        color = pattern[y % 8, x % 8]
+        BGColor.new(color.r, color.g, color.b)
       end
 
       # Ppu -> Integer -> Integer -> (TileNumber, Arttribute)
@@ -236,18 +239,53 @@ module Hongbai
         return tile, attribute
       end
 
-      # Ppu -> nil | Array<Integer>
-      # where Array's length <= 8
-      def compute_visible_sprites
-        return unless @regs.show_sprites?
+      # Ppu -> nil
+      def sprite_evaluation
+        @oam2.init
+        n = 0
+        loop do
+          y = @oam[n * 4]
+          @oam2.insert(y)
+          if sprite_on_next_scanline(y)
+            (1..3).each { |i| @oam2.push(@oam[n * 4 + i]) }
+          end
+          n += 1
+          return if n == 64
+
+          break if @oam2.full?
+        end
+
+        m = 0
+        while n < 64
+          y = @oam[n * 4 + m]
+          if sprite_on_next_scanline(y)
+            @regs.set_sprite_overflow
+            break
+          else
+            n += 1
+            # the sprite overflow bug
+            m = (m + 1) % 4
+          end
+        end
+      end
+
+      # Ppu -> Bool
+      def sprite_on_next_scanline(y)
+        y <= @scanline + 1 && y + 7 >= @scanline + 1
+      end
+
+      # Ppu -> nil
+      def sprite_fetch
         # TODO
       end
 
-      # Ppu -> nil | Array<Integer> -> nil | BGColor ->
-      # nil | SpriteColorAbove | SpriteColorBelow
-      def get_sprite_pixel(sprites, background)
-        return if sprites.nil?
+      # Ppu -> Integer -> nil | BGColor -> nil | SpriteColorAbove | SpriteColorBelow
+      def get_sprite_pixel(x, background)
+        # draw sprites data in oam2
         # TODO
+        # evaluate sprite info for next scanline
+        sprite_evaluation
+        sprite_fetch
       end
 
       # Ppu -> Integer -> nil
@@ -291,8 +329,39 @@ module Hongbai
     end
   end
 
-  #class Oam
-  #end
+  class Oam; end
+
+  class Oam2
+    def initialize
+      @arr = Array.new(8 * 4, 0xff)
+      @cursor = 0
+      @openslot = 0
+      @push_count = 0
+    end
+
+    def init
+      @arr.map! { 0xff }
+      @cursor = 0
+      @openslot = 0
+      @push_count = 0
+    end
+
+    def push(n)
+      @arr[@cursor] = n
+      @cursor += 1
+      @openslot = @cursor
+      @push_count += 1
+    end
+
+    def insert(n)
+      @arr[@openslot] = n
+      @cursor = @openslot + 1
+    end
+
+    def full?
+      @push_count >= 24 # 8 sprites, each 3 pushes
+    end
+  end
 
   class Vram
   end
@@ -330,6 +399,10 @@ module Hongbai
     end
   end
 
+  class Color < Struct.new(:r, :g, :b); end
+
+  # A tile is a 8*8 Matrix of Color
+  class Tile < Matrix; end
 end
 
 #
