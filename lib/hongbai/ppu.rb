@@ -41,9 +41,13 @@ module Hongbai
       @vram = vram
       @next_scanline_cycle = CYCLES_PER_SCANLINE
       @scanline = 0
+      @x = 0
       @regs = Regs.new()
       @oam = Oam.new()
       @oam2 = Oam2.new()
+
+      # A buffer that computes color priority and checks sprite 0 hit.
+      @output = Output.new()
 
       # Upper left corner of the visiable area.
       @scroll_x = 0
@@ -92,13 +96,18 @@ module Hongbai
         # make either plane a 8*8 matrix of bit
         plane0 = Matrix.build(8) { |r, c| (plane0[r] >> (7 - c)) & 1 }
         plane1 = Matrix.build(8) { |r, c| (plane1[r] >> (7 - c)) & 1 }
-        attribute = Matrix.build(8) { col }
         # plane0 controls the 0 bit of color index,
         # plane1 controls the 1 bit whild the attribute controls the higher 2 bits
-        tile = plane0 + plane1 * Matrix.scalar(8, 2) + attribute * Matrix.scalar(8, 4)
+        tile = plane0 + plane1 * Matrix.scalar(8, 2)
+        attribute = col << 2
         tile.map do |i| 
-          r, g, b = get_color(i & 0x3f)
-          Color.new(r, g, b)
+          if i.zero? # transparent point
+            nil
+          else
+            index = (i | attribute) & 0x3f
+            r, g, b = get_color(index)
+            Color.new(r, g, b)
+          end
         end
       end
 
@@ -114,14 +123,26 @@ module Hongbai
 
       # Ppu -> Nil
       def render_scanline
-        backdrop = get_backdrop_color
-
-        (0...SCREEN_WIDTH).each do |x|
-          background = get_background_pixel(x)
-          sprite_color = get_sprite_pixel(x, background)
-          color = sprite_color | background | backdrop
-          put_pixel(x, color)
+        @backdrop = get_backdrop_color
+        # evaluate sprite info for next scanline
+        sprite_evaluation
+        # compute which nametable we are in
+        nametable = nametable_base
+        # nametable y index
+        y_idx = ((@scroll_y + @scanline) % SCREEN_HEIGHT) / 8
+        # 32 tiles (256 pixels) a scanline, every two tiles use a same palette attribute
+        while @x < SCREEN_WIDTH
+          # nametable x index
+          x_idx = ((@scroll_x + @x) % SCREEN_WIDTH) / 8
+          attribute = get_attribute(nametable, x_idx, y_idx)
+          render_tile(nametable, x_idx, y_idx, attribute)
+          render_tile(nametable, x_idx + 1, y_idx, attribute)
         end
+
+        # HBlank
+        # fetch sprite tiles for the next scanline
+        sprite_fetch
+        @x = 0
       end
 
       # Ppu -> [Integer, Integer, Integer]
@@ -140,12 +161,77 @@ module Hongbai
         BDColor.new(r, g, b)
       end
 
-      # Ppu -> Integer -> nil | BGColor
-      def get_background_pixel(x)
-        return unless @regs.show_background?
-        x = x + @scroll_x
-        y = @scanline + @scroll_y
+      # Render a tile. (Only the current scanline)
+      # Ppu -> nil
+      def render_tile(nametable_base, x_idx, y_idx, attribute)
+        tile_num = @vram.load(nametable_base + y_idx * 32 + x_idx)
+        # TODO: Any need to process pattern 0 specially?
+        pattern = @pattern_table[@regs.bg_pattern_table_addr + tile_num, attribute]
 
+        if @regs.show_background?
+          bg_colors = pattern.row((@scroll_y + @scanline) % 8)
+          if @regs.show_sprites?
+            # push_bg returns true when sprite 0 hits.
+            if @output.push_bg(bg_colors, @x)
+              @regs.set_sprite_zero_hit(true)
+            end
+            8.times {|i| put_pixel(@output[@x + i]) }
+          else
+            # Sprite rendering is disabled.
+            bg_colors.each {|c| put_pixel(c) }
+          end
+        elsif @regs.show_sprites?
+          # Background rendering is disabled.
+          8.times {|i| put_pixel(@output[@x + i]) }
+        else
+          # Both background and pixel rendering are disabled.
+          8.times { put_pixel(@backdrop) }
+        end
+
+        @x += 8
+      end
+ 
+      # Ppu -> Integer -> Integer -> Integer -> Integer
+      def get_attribute(nametable_base, x_idx, y_idx)
+        # load the attribute
+        # Every 4*4 tiles share an attribute byte
+        # ________________
+        # |/|/|/|/|_|_|_|_
+        # |/|/|/|/|_|_|_|_
+        # |/|/|/|/|_|_|_|_
+        # |/|/|/|/|_|_|_|_
+        # |_|_|_|_|_|_|_|_
+        # |_|_|_|_|_|_|_|_
+        # |_|_|_|_|_|_|_|_
+        # | | | | | | | |
+        #
+        offset = y_idx / 4 * 8 + x_idx / 4
+        attr_byte = @vram.load(nametable_base + 0x3c0 + offset)
+        # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
+        # 4*4 tiles
+        #
+        # 7654 3210
+        # |||| ||++- topleft corner
+        # |||| ++--- topright corner
+        # ||++ ----- bottomleft corner
+        # ++-- ----- bottomright corner
+        if y_idx % 4 < 2
+          if x_idx % 4 < 2 # topleft
+            attr_byte & 3
+          else # topright
+            (attr_byte >> 2) & 3
+          end
+        else
+          if x_idx % 4 < 2 # bottomleft
+            (attr_byte >> 4) & 3
+          else # topright
+            (attr_byte >> 6) & 3
+          end
+        end
+      end
+
+      # Ppu -> Integer
+      def nametable_base
         # There are four nametables in VRAM, each consists of 32*30 entrys.
         # Each entry presents an 8*8 pixels area on the screen. 
         #  -------------------------------- 
@@ -162,81 +248,19 @@ module Hongbai
         # |               |                |
         #  --------------------------------
         #
-        # Ench entry points to a tile, and is associated with a 2-bit attribute.
-        # A tile is an 8*8 pixels pattern, having 4 dfferent colored varients
-        # according to the 2-bit attribute.
-        tile, attribute = fetch_nametable_entry(x, y)
-        return if tile.zero?
-
-        pattern = @pattern_table[@regs.bg_pattern_table_addr * 256 + tile, attribute]
-        color = pattern[y % 8, x % 8]
-        BGColor.new(color.r, color.g, color.b)
-      end
-
-      # Ppu -> Integer -> Integer -> (TileNumber, Arttribute)
-      # where Arttibute is a 2-bit integer([0-3]).
-      # and TileNumber is a byte.
-      def fetch_nametable_entry(x, y)
-        x_idx = x / 8 % 64
-        y_idx = y / 8 % 60
-        
-        base = if y_idx < 30
-                 if x_idx < 32
-                   0x2000
-                 else
-                   0x2400
-                 end
-               else
-                 if x_idx < 32
-                   0x2800
-                 else
-                   0x2c00
-                 end
-               end
-        x_idx %= 32
-        y_idx %= 30
-
-        tile = @vram.load(base + y_idx * 32 + x_idx)
-
-        # load the attribute
-        # Every 4*4 tiles share an attribute byte
-        # ________________
-        # |/|/|/|/|_|_|_|_
-        # |/|/|/|/|_|_|_|_
-        # |/|/|/|/|_|_|_|_
-        # |/|/|/|/|_|_|_|_
-        # |_|_|_|_|_|_|_|_
-        # |_|_|_|_|_|_|_|_
-        # |_|_|_|_|_|_|_|_
-        # | | | | | | | |
-        #
-        group = y_idx / 4 * 8 + x_idx / 4
-        attr_byte = @vram.load(base + 0x3c0 + group)
-
-        # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
-        # 4*4 tiles
-        #
-        # 7654 3210
-        # |||| ||++- topleft corner
-        # |||| ++--- topright corner
-        # ||++ ----- bottomleft corner
-        # ++-- ----- bottomright corner
-        x_idx %= 4
-        y_idx %= 4
-        attribute = if y_idx < 2
-                      if x_idx < 2
-                        attr_byte & 0x3 # top left
-                      else
-                        (attr_byte >> 2) & 0x3 # top right
-                      end
-                    else
-                      if x_idx < 2
-                        (attr_byte >> 4) & 0x3 # bottom left
-                      else
-                        (attr_byte >> 6) & 0x3 # bottom right
-                      end
-                    end
-        return tile, attribute
+        if @scroll_y % 480 < 240
+          if @scroll_x % 512 < 256
+            0x2000
+          else
+            0x2400
+          end
+        else
+          if @scroll_x % 512 < 256
+            0x2800
+          else
+            0x2c00
+          end
+        end
       end
 
       # Ppu -> nil
@@ -269,9 +293,10 @@ module Hongbai
         end
       end
 
-      # Ppu -> Bool
-      def sprite_on_next_scanline(y)
-        y <= @scanline + 1 && y + 7 >= @scanline + 1
+      # Ppu -> Integer -> Bool
+      def sprite_on_next_scanline(sprite_y_offset)
+        sprite_y_offset <= @scanline + 1 &&
+          sprite_y_offset + @regs.sprite_height >= @scanline + 1
       end
 
       # Ppu -> nil
@@ -279,19 +304,11 @@ module Hongbai
         # TODO
       end
 
-      # Ppu -> Integer -> nil | BGColor -> nil | SpriteColorAbove | SpriteColorBelow
-      def get_sprite_pixel(x, background)
-        # draw sprites data in oam2
-        # TODO
-        # evaluate sprite info for next scanline
-        sprite_evaluation
-        sprite_fetch
-      end
-
       # Ppu -> Integer -> nil
-      def put_pixel(x, color)
+      def put_pixel(color)
+        color ||= @backdrop
         @renderer.draw_color = [color.r, color.g, color.b]
-        @renderer.draw_point(x, @scanline)
+        @renderer.draw_point(@x, @scanline)
       end
 
       # Ppu -> Nil
@@ -326,6 +343,16 @@ module Hongbai
     # Regs -> Bool
     def show_sprites?
         # TODO
+    end
+
+    # Regs -> Integer
+    # return 0 or 0x1000
+    def bg_pattern_table_addr
+    end
+
+    # Regs -> Integer
+    # return 8 or 16
+    def sprite_height
     end
   end
 
@@ -366,43 +393,85 @@ module Hongbai
   class Vram
   end
 
-  class BDColor < Struct.new(:r, :g, :b)
-    # Color -> Color -> Color
-    # Backdrop color, has a priority lower than any other colors except nil
-    def |(other)
-      other.nil? ? self : other
-    end
-  end
-
-  class SpriteColorBelow < BDColor
-    # Color -> Color -> Color
-    def |(other)
-      case other
-      when BGColor then other
-      else self
-      end
-    end
-  end
-
-  class BGColor < SpriteColorBelow
-    def |(other)
-      case other
-      when SpriteColorAbove then other
-      else self
-      end
-    end
-  end
-
-  class SpriteColorAbove < BGColor
-    def |(other)
-      self
-    end
-  end
-
   class Color < Struct.new(:r, :g, :b); end
 
   # A tile is a 8*8 Matrix of Color
   class Tile < Matrix; end
+
+  class OutputItem < Struct.new(:color, :from_sprite_0, :above_bg); end
+
+  class Output
+    def initialize
+      @may_hit_sprite_0 = false
+      @items = Array.new(256) { OutputItem.new }
+    end
+
+    attr_accessor :may_hit_sprite_0
+
+    def clear
+      @may_hit_sprite_0 = false
+      @items.each do |i|
+        i.color = nil
+        i.from_sprite_0 = nil
+        i.above_bg = nil
+      end
+    end
+
+    def [](n)
+      @items[n].color
+    end
+
+    # Output -> Array<Color> -> Integer -> Bool -> Bool -> Nil
+    # where colors.ength == 8
+    # x_offset >= 0; <= 247
+    def push_sprite(colors, x_offset, from_sprite_0, above_bg)
+      i = x_offset
+      colors.each do |c|
+        if @items[i].above_bg.nil?
+          # No sprite on this dot 
+          @tiems[i].color = c
+          @items[i].from_sprite_0 = from_sprite_0
+          @items[i].above_bg = above_bg
+        end
+        i += 1
+      end
+    end
+
+    # Output -> Array<Color> -> Integer -> Bool
+    # Return true if sprite 0 hits, return false otherwise.
+    def push_bg(colors, x_offset)
+      i = x_offset
+      if @may_hit_sprite_0
+        # Only checks when sprite 0 is included in this render
+        hit = false
+        colors.each do |c|
+          item = @items[i]
+          if item.from_sprite_0 && !item.color.nil? && !c.nil?
+            hit = true
+          end
+          push_bg_color(c, i)
+          i += 1
+        end
+        hit
+      else
+        colors.each do |c|
+          push_bg_color(c, i)
+          i += 1
+        end
+        false
+      end
+    end
+
+    private
+      # Output -> Color -> Integer -> Nil
+      # Insert a background color at the index
+      def push_bg_color(color, index)
+        item = @items[index]
+        unless !item.color.nil? && item.above_bg
+          @items[index].color = color
+        end
+      end
+  end
 end
 
 #
