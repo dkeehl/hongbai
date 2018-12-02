@@ -42,18 +42,19 @@ module Hongbai
       @next_scanline_cycle = CYCLES_PER_SCANLINE
       @scanline = 0
       @x = 0
-      @regs = Regs.new()
-      @oam = Oam.new()
-      @oam2 = Oam2.new()
+      @regs = Regs.new
+      @oam = Oam.new
+      @oam2 = Oam2.new
 
+      @backdrop = Color.new
       # A buffer that computes color priority and checks sprite 0 hit.
-      @output = Output.new()
+      @buffer = Output.new
 
-      # Upper left corner of the visiable area.
+      # Upper left corner of the visiable area in current nametable
       @scroll_x = 0
       @scroll_y = 0
 
-      @pattern_table = Matrix.build(512, 4, &:build_tile)
+      @pattern_table = Matrix.build(512, 8, &:build_tile)
     end
 
     # step : Ppu -> Int -> [Bool, Bool]
@@ -123,20 +124,38 @@ module Hongbai
 
       # Ppu -> Nil
       def render_scanline
-        @backdrop = get_backdrop_color
+        get_backdrop_color
         # evaluate sprite info for next scanline
         sprite_evaluation
         # compute which nametable we are in
-        nametable = nametable_base
+        nametable = @regs.name_table_base
         # nametable y index
         y_idx = ((@scroll_y + @scanline) % SCREEN_HEIGHT) / 8
+
+        tile_internal_x_offset = @scroll_x % 8
+        unless tile_internal_x_offset.zero?
+          first = (tile_internal_x_offset..7)
+          last = (0...tile_internal_x_offset)
+        end
+
         # 32 tiles (256 pixels) a scanline, every two tiles use a same palette attribute
         while @x < SCREEN_WIDTH
           # nametable x index
           x_idx = ((@scroll_x + @x) % SCREEN_WIDTH) / 8
           attribute = get_attribute(nametable, x_idx, y_idx)
-          render_tile(nametable, x_idx, y_idx, attribute)
-          render_tile(nametable, x_idx + 1, y_idx, attribute)
+
+          # FIXME: a logic like `while attribute.same? draw_points` looks more pretty
+          if first && @x < 8
+            render_tile(nametable, x_idx, y_idx, attribute, first)
+          else
+            render_tile(nametable, x_idx, y_idx, attribute)
+          end
+
+          if last && @x > 247
+            render_tile(nametable, x_idx + 1, y_idx, attribute, last)
+          else
+            render_tile(nametable, x_idx + 1, y_idx, attribute)
+          end
         end
 
         # HBlank
@@ -153,17 +172,9 @@ module Hongbai
         return r, g, b
       end
 
-      # Ppu -> BDColor
-      def get_backdrop_color
-        # VRAM $3F00 stores the universal background color
-        index = @vram.load(0x3f00) & 0x3f
-        r, g, b = get_color(index)
-        BDColor.new(r, g, b)
-      end
-
       # Render a tile. (Only the current scanline)
-      # Ppu -> nil
-      def render_tile(nametable_base, x_idx, y_idx, attribute)
+      # Ppu -> Integer -> Integer -> Integer -> Interger -> Nil | Range -> nil
+      def render_tile(nametable_base, x_idx, y_idx, attribute, range = (0..7))
         tile_num = @vram.load(nametable_base + y_idx * 32 + x_idx)
         # TODO: Any need to process pattern 0 specially?
         pattern = @pattern_table[@regs.bg_pattern_table_addr + tile_num, attribute]
@@ -172,23 +183,23 @@ module Hongbai
           bg_colors = pattern.row((@scroll_y + @scanline) % 8)
           if @regs.show_sprites?
             # push_bg returns true when sprite 0 hits.
-            if @output.push_bg(bg_colors, @x)
+            if @buffer.push_bg(bg_colors, range, @x)
               @regs.set_sprite_zero_hit(true)
             end
-            8.times {|i| put_pixel(@output[@x + i]) }
+            range.each {|i| put_pixel(@buffer[@x + i]) }
           else
             # Sprite rendering is disabled.
-            bg_colors.each {|c| put_pixel(c) }
+            range.each {|i| put_pixel(bg_colors[i]) }
           end
         elsif @regs.show_sprites?
           # Background rendering is disabled.
-          8.times {|i| put_pixel(@output[@x + i]) }
+          range.each {|i| put_pixel(@buffer[@x + i]) }
         else
           # Both background and pixel rendering are disabled.
-          8.times { put_pixel(@backdrop) }
+          range.each { put_pixel(@backdrop) }
         end
 
-        @x += 8
+        @x += range.length
       end
  
       # Ppu -> Integer -> Integer -> Integer -> Integer
@@ -230,43 +241,18 @@ module Hongbai
         end
       end
 
-      # Ppu -> Integer
-      def nametable_base
-        # There are four nametables in VRAM, each consists of 32*30 entrys.
-        # Each entry presents an 8*8 pixels area on the screen. 
-        #  -------------------------------- 
-        # |$2000          |$2400           |
-        # |               |                |
-        # |            30 |                |
-        # |               |                |
-        # |       32      |       32       |
-        # |--------------------------------|
-        # |$2800          |$2C00           |
-        # |               |                |
-        # |            30 |                |
-        # |               |                |
-        # |               |                |
-        #  --------------------------------
-        #
-        if @scroll_y % 480 < 240
-          if @scroll_x % 512 < 256
-            0x2000
-          else
-            0x2400
-          end
-        else
-          if @scroll_x % 512 < 256
-            0x2800
-          else
-            0x2c00
-          end
-        end
-      end
-
       # Ppu -> nil
       def sprite_evaluation
         @oam2.init
-        n = 0
+
+        y = @oam[0]
+        @oam2.insert(y)
+        if sprite_on_next_scanline(y)
+          (1..3).each { |i| @oam2.push(@oam[i]) }
+          @oam2.has_sprite_zero = true
+        end
+
+        n = 1
         loop do
           y = @oam[n * 4]
           @oam2.insert(y)
@@ -300,11 +286,50 @@ module Hongbai
       end
 
       # Ppu -> nil
+      # read oam2 data to buffer
       def sprite_fetch
-        # TODO
+        @buffer.clear
+        @buffer.may_hit_sprite_0 = @oam2.has_sprite_zero
+
+        @oam2.each_sprite do |tile, attr, flip_h, flip_v, x, y, prior, sprite0|
+          y_inter = @scanline + 1 - y
+          if @regs.sprite_height == 8
+            # 8*8 sprite mode
+            pattern = @pattern_table[tile, attr]
+            y_inter = flip_v ? 7 - y_inter : y_inter
+          else
+            # 8*16 sprite mode
+            tile = Ppu.to_8x16_sprite_tile_addr(tile)
+            if y_inter <= 7 && !flip_v || y_inter > 7 && flip_v
+              pattern = @pattern_table[tile, attr]
+              y_inter = flip_v ? 15 - y_inter : y_inter
+            else
+              pattern = @pattern_table[tile + 1, attr]
+              y_inter = flip_v ? 7 - y_inter : y_inter % 8
+            end
+          end
+          colors = pattern.row(y_inter)
+          # TODO: Can this be done without using `to_a` operation?
+          colors = colors.to_a.reverse if flip_h
+          @buffer.push_sprite(colors, x, prior, sprite0)
+        end
       end
 
-      # Ppu -> Integer -> nil
+      # Integer -> Integer
+      def self.to_8x16_sprite_tile_addr(tile_number)
+        bank = tile_number & 1 * 256
+        bank + (tile_number & 0xfe)
+      end
+
+      # Ppu -> Nil
+      def get_backdrop_color
+        # VRAM $3F00 stores the universal background color
+        index = @vram.load(0x3f00) & 0x3f
+        r, g, b = get_color(index)
+        @backdrop.update(r, g, b)
+      end
+
+      # Ppu -> Nil | Integer -> nil
       def put_pixel(color)
         color ||= @backdrop
         @renderer.draw_color = [color.r, color.g, color.b]
@@ -354,6 +379,11 @@ module Hongbai
     # return 8 or 16
     def sprite_height
     end
+
+    # Regs -> Integer
+    # return $2000 or $2400 or $2800 or $2c00
+    def nametable_base
+    end
   end
 
   class Oam; end
@@ -364,15 +394,20 @@ module Hongbai
       @cursor = 0
       @openslot = 0
       @push_count = 0
+      @has_sprite_zero = false
     end
+
+    attr_accessor :has_sprite_zero
 
     def init
       @arr.map! { 0xff }
       @cursor = 0
       @openslot = 0
       @push_count = 0
+      @has_sprite_zero = false
     end
 
+    # Oam2 -> Integer -> Nil
     def push(n)
       @arr[@cursor] = n
       @cursor += 1
@@ -380,20 +415,60 @@ module Hongbai
       @push_count += 1
     end
 
+    # Oam2 -> Integer -> Nil
+    # overide previous inserted element, if no push happened after that insertion
     def insert(n)
       @arr[@openslot] = n
       @cursor = @openslot + 1
     end
 
+    # Oam2 -> Bool
     def full?
       @push_count >= 24 # 8 sprites, each 3 pushes
     end
+
+    # Iterate over sprites
+    def each_sprite
+      count = 0
+      if @has_sprite_zero
+        tile, attr, flip_h, flip_v, x, y, prior = take_at(0)
+        yield(tile, attr, flip_h, flip_v, x, y, prior, true)
+        count += 1
+      end
+
+      while count * 3 < @push_count
+        tile, attr, flip_h, flip_v, x, y, prior = take_at(count)
+        yield(tile, attr, flip_h, flip_v, x, y, prior, false)
+        count += 1
+      end
+    end
+
+    private
+      # Oam2 -> Integer -> (Integer, Integer, Bool, Bool, Integer, Integer, Bool)
+      def take_at(count)
+        tile = @arr[count + 1]
+        y = @arr[count]
+        x = @arr[count + 3]
+
+        attributes = @arr[count + 2]
+        attr = attributes & 3 + 4
+        prior = (attributes & 0x20).zero?
+        flip_h = (attributes & 0x40) != 0
+        flip_v = (attributes & 0x80) != 0
+        return tile, attr, flip_h, flip_v, x, y, prior
+      end
   end
 
   class Vram
   end
 
-  class Color < Struct.new(:r, :g, :b); end
+  class Color < Struct.new(:r, :g, :b)
+    def update(r, g, b)
+      self.r = r
+      self.g = g
+      self.b = b
+    end
+  end
 
   # A tile is a 8*8 Matrix of Color
   class Tile < Matrix; end
@@ -403,7 +478,7 @@ module Hongbai
   class Output
     def initialize
       @may_hit_sprite_0 = false
-      @items = Array.new(256) { OutputItem.new }
+      @items = Array.new(SCREEN_WIDTH) { OutputItem.new }
     end
 
     attr_accessor :may_hit_sprite_0
@@ -417,6 +492,7 @@ module Hongbai
       end
     end
 
+    # Output -> Integer -> Color
     def [](n)
       @items[n].color
     end
@@ -424,10 +500,10 @@ module Hongbai
     # Output -> Array<Color> -> Integer -> Bool -> Bool -> Nil
     # where colors.ength == 8
     # x_offset >= 0; <= 247
-    def push_sprite(colors, x_offset, from_sprite_0, above_bg)
+    def push_sprite(colors, x_offset, above_bg, from_sprite_0)
       i = x_offset
       colors.each do |c|
-        if @items[i].above_bg.nil?
+        if @items[i].above_bg.nil? && i < SCREEN_WIDTH
           # No sprite on this dot 
           @tiems[i].color = c
           @items[i].from_sprite_0 = from_sprite_0
@@ -437,15 +513,16 @@ module Hongbai
       end
     end
 
-    # Output -> Array<Color> -> Integer -> Bool
+    # Output -> Array<Color> -> Range -> Integer -> Bool
     # Return true if sprite 0 hits, return false otherwise.
-    def push_bg(colors, x_offset)
+    def push_bg(colors, range, x_offset)
       i = x_offset
       if @may_hit_sprite_0
         # Only checks when sprite 0 is included in this render
         hit = false
-        colors.each do |c|
+        range.each do |n|
           item = @items[i]
+          c = colors[n]
           if item.from_sprite_0 && !item.color.nil? && !c.nil?
             hit = true
           end
@@ -454,7 +531,8 @@ module Hongbai
         end
         hit
       else
-        colors.each do |c|
+        range.each do |n|
+          c = colors[n]
           push_bg_color(c, i)
           i += 1
         end
