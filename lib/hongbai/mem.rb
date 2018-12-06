@@ -60,5 +60,7 @@ module Hongbai
         @rom.prg_store(addr, val)
       end
     end
+
+    def fetch(addr); read(addr) end
   end
 end

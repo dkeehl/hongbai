@@ -127,6 +127,10 @@ module Hongbai
   end
 
   class Cpu
+    NMI_VECTOR = 0xfffa
+    BRK_VECTOR = 0xfffe
+    RESET_VECTOR = 0xfffc
+
     def initialize(mem)
       @m = mem
       @a = Register.new             #Accumulator Register
@@ -140,7 +144,9 @@ module Hongbai
       #@sp.load(0xff)
     end
 
-    def excute_cycle
+    attr_reader :counter
+
+    def step
       opcode = @m.fetch(@pc.value)
       c = decode(opcode)
       self.send(*c)
@@ -148,6 +154,28 @@ module Hongbai
 
     def suspend(cycles)
       @counter += cycles
+    end
+
+    def nmi
+      push(@pc.value >> 8)
+      push(@pc.value & 0xff)
+      push(@p.value)
+      lo = @m.read(NMI_VECTOR)
+      disable_interrupt
+      hi = @m.read(NMI_VECTOR + 1)
+      @pc.value = (hi << 8) | lo
+    end
+
+    def irq
+      return if interrupt_disabled?
+
+      push(@pc.value >> 8)
+      push(@pc.value & 0xff)
+      push(@p.value)
+      lo = @m.read(BRK_VECTOR)
+      disable_interrupt
+      hi = @m.read(BRK_VECTOR + 1)
+      @pc.value = (hi << 8) | lo
     end
     #############################
     #States accessors
