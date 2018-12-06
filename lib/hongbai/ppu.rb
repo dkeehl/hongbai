@@ -12,33 +12,14 @@ module Hongbai
     VBLANK_SCANLINE = 241
     LAST_SCANLINE = 261
 
-    PALETTE = [
-      124,124,124,    0,0,252,        0,0,188,        68,40,188,
-      148,0,132,      168,0,32,       168,16,0,       136,20,0,
-      80,48,0,        0,120,0,        0,104,0,        0,88,0,
-      0,64,88,        0,0,0,          0,0,0,          0,0,0,
-      188,188,188,    0,120,248,      0,88,248,       104,68,252,
-      216,0,204,      228,0,88,       248,56,0,       228,92,16,
-      172,124,0,      0,184,0,        0,168,0,        0,168,68,
-      0,136,136,      0,0,0,          0,0,0,          0,0,0,
-      248,248,248,    60,188,252,     104,136,252,    152,120,248,
-      248,120,248,    248,88,152,     248,120,88,     252,160,68,
-      248,184,0,      184,248,24,     88,216,84,      88,248,152,
-      0,232,216,      120,120,120,    0,0,0,          0,0,0,
-      252,252,252,    164,228,252,    184,184,248,    216,184,248,
-      248,184,248,    248,164,192,    240,208,176,    252,224,168,
-      248,216,120,    216,248,120,    184,248,184,    184,248,216,
-      0,252,252,      248,216,248,    0,0,0,          0,0,0
-    ]
-
-    # initialize: Vram -> Ppu
-    def initialize(vram)
+    # initialize: Rom -> Ppu
+    def initialize(rom)
       win = SDL2::Window.create("hongbai",
                                 SDL2::Window::POS_CENTERED,
                                 SDL2::Window::POS_CENTERED,
                                 SCREEN_WIDTH, SCREEN_HEIGHT, 0)
       @renderer = win.create_renderer(-1, 0)
-      @vram = vram
+      @vram = Vram.new(rom)
       @next_scanline_cycle = CYCLES_PER_SCANLINE
       @scanline = 0
       @x = 0
@@ -46,7 +27,6 @@ module Hongbai
       @oam = Oam.new
       @oam2 = Oam2.new
 
-      @backdrop = Color.new
       # A buffer that computes color priority and checks sprite 0 hit.
       @buffer = Output.new
 
@@ -54,6 +34,7 @@ module Hongbai
       @scroll_x = 0
       @scroll_y = 0
 
+      # TODO: This is a hack to speed up. But it doesn't work with all mappers
       @pattern_table = Matrix.build(512, 8, &:build_tile)
     end
 
@@ -62,6 +43,8 @@ module Hongbai
     def step(cpu_cycle_count)
       vblank_nmi, scanline_irq = false, false
 
+      @sprite_height ||= @regs.sprite_height_mode
+
       if cpu_cycle_count >= @next_scanline_cycle
         if @scanline < SCREEN_HEIGHT
           render_scanline
@@ -69,11 +52,11 @@ module Hongbai
 
         @scanline += 1
 
-        scanline_irq = scanline_irq?
+        scanline_irq = @vram.rom.next_scanline_irq
 
         if @scanline == VBLANK_SCANLINE
           set_vblank_start
-          vblank_nmi = vblank_nmi?
+          vblank_nmi = @regs.generate_vblank_nmi?
         elsif @scanline == LAST_SCANLINE
           set_vblank_end
           @renderer.present
@@ -86,8 +69,98 @@ module Hongbai
       return vblank_nmi, scanline_irq
     end
 
+    # Take a Cpu memory space address, return the corresponding register value
+    def load(addr)
+      case addr & 7
+      when 0 then 0 # write only
+      when 1 then 0 # write only
+      when 2 then read_ppu_status
+      when 3 then 0 # write only
+      when 4 then @oam[@regs.oam_addr]
+      when 5 then 0 # write only
+      when 6 then 0 # write only
+      when 7 then read_ppu_data
+      else raise "Unreachable case"
+      end
+    end
+
+    # Take a Cpu memory space address, update a register
+    def store(addr, val)
+      case addr & 7
+      when 0 then @regs.ppu_ctrl = val
+      when 1 then @regs.ppu_mask = val
+      when 2 then nil # read only
+      when 3 then @regs.oam_addr = val
+      when 4 then write_oam_data(val)
+      when 5 then update_ppu_scroll(val)
+      when 6 then update_ppu_addr(val)
+      when 7 then write_ppu_data(val)
+      else raise "Unreachable case"
+      end
+    end
+
+    # TODO: oam dma
+
     private
+      # Ppu -> Integer
+      def read_ppu_status
+        @regs.ppu_scroll.scroll_is_in_x = true
+        @regs.ppu_addr.nybble_is_hi = true
+        @regs.ppu_status
+      end
+
+      # Ppu -> Integer -> Nil
+      def update_ppu_scroll(val)
+        if @regs.ppu_scroll.scroll_is_in_x
+          @scroll_x = val
+          @regs.ppu_scroll.x = val
+          @regs.ppu_scroll.scroll_is_in_x = false
+        else
+          @scroll_y = val
+          @regs.ppu_scroll.y = val
+          @regs.ppu_scroll.scroll_is_in_x = true
+        end
+      end
+
+      # Ppu -> Integer -> Nil
+      def update_ppu_addr(val)
+        if @regs.ppu_addr.nybble_is_hi
+          @regs.ppu_addr.val = @regs.ppu_addr.val & 0x00ff | (val << 8)
+          @regs.ppu_addr.nybble_is_hi = false
+        else
+          @regs.ppu_addr.val = @regs.ppu_addr.val & 0xff00 | val
+          @regs.ppu_addr.nybble_is_hi = true
+        end
+      end
+
+      # Ppu -> Integer
+      def read_ppu_data
+        # Mirror down addresses greater than 0x3fff
+        addr = @regs.ppu_addr.val & 0x3fff
+        val = @vram.load(addr)
+        @regs.ppu_addr.val += @regs.vram_addr_increment
+        buffered = @regs.ppu_data_read_buffer
+        @regs.ppu_data_buffer = val
+
+        addr < 0x3f00 ? buffered : val
+      end
+
+      # Ppu -> Integer -> Nil
+      def write_ppu_data(val)
+        # Mirror down addresses greater than 0x3fff
+        addr = @regs.ppu_addr.val & 0x3fff
+        @vram.store(addr, val)
+        @regs.ppu_addr.val += @regs.vram_addr_increment
+      end
+
+      # Ppu -> Integer -> Nil
+      def write_oam_data(val)
+        @oam[@regs.oam_addr] = val
+        @regs.oam_addr = (@regs.oam_addr + 1) & 0xff
+      end
+
       # Ppu -> Integer -> Integer -> Tile
+      # A Tile is a 8*8 Matrix of Color
       def build_tile(row, col)
         # The pattern table lays in the VRAM from $0000 to $1fff,
         # including 512 tiles, each of 16 bytes, devided into two
@@ -101,30 +174,11 @@ module Hongbai
         # plane1 controls the 1 bit whild the attribute controls the higher 2 bits
         tile = plane0 + plane1 * Matrix.scalar(8, 2)
         attribute = col << 2
-        tile.map do |i| 
-          if i.zero? # transparent point
-            nil
-          else
-            index = (i | attribute) & 0x3f
-            r, g, b = get_color(index)
-            Color.new(r, g, b)
-          end
-        end
-      end
-
-      # Ppu -> Bool
-      def scanline_irq?
-        # TODO
-      end
-
-      # Ppu -> Bool
-      def vblank_nmi?
-        # TODO
+        tile.map {|i| i.zero? ? 0 : (i | attribute) }
       end
 
       # Ppu -> Nil
       def render_scanline
-        get_backdrop_color
         # evaluate sprite info for next scanline
         sprite_evaluation
         # compute which nametable we are in
@@ -164,13 +218,6 @@ module Hongbai
         @x = 0
       end
 
-      # Ppu -> [Integer, Integer, Integer]
-      def get_color(index)
-        r = PALETTE[index * 3 + 2]
-        g = PALETTE[index * 3 + 1]
-        b = PALETTE[index * 3 + 0]
-        return r, g, b
-      end
 
       # Render a tile. (Only the current scanline)
       # Ppu -> Integer -> Integer -> Integer -> Interger -> Nil | Range -> nil
@@ -196,7 +243,7 @@ module Hongbai
           range.each {|i| put_pixel(@buffer[@x + i]) }
         else
           # Both background and pixel rendering are disabled.
-          range.each { put_pixel(@backdrop) }
+          range.each { put_pixel(0) }
         end
 
         @x += range.length
@@ -245,6 +292,7 @@ module Hongbai
       def sprite_evaluation
         @oam2.init
 
+        # TODO: use OAMADDR to start
         y = @oam[0]
         @oam2.insert(y)
         if sprite_on_next_scanline(y)
@@ -269,7 +317,7 @@ module Hongbai
         while n < 64
           y = @oam[n * 4 + m]
           if sprite_on_next_scanline(y)
-            @regs.set_sprite_overflow
+            @regs.set_sprite_overflow(true)
             break
           else
             n += 1
@@ -282,7 +330,7 @@ module Hongbai
       # Ppu -> Integer -> Bool
       def sprite_on_next_scanline(sprite_y_offset)
         sprite_y_offset <= @scanline + 1 &&
-          sprite_y_offset + @regs.sprite_height >= @scanline + 1
+          sprite_y_offset + @sprite_height >= @scanline + 1
       end
 
       # Ppu -> nil
@@ -293,8 +341,9 @@ module Hongbai
 
         @oam2.each_sprite do |tile, attr, flip_h, flip_v, x, y, prior, sprite0|
           y_inter = @scanline + 1 - y
-          if @regs.sprite_height == 8
+          if @sprite_height == 8
             # 8*8 sprite mode
+            tile += @regs.sprite_pattern_table_addr
             pattern = @pattern_table[tile, attr]
             y_inter = flip_v ? 7 - y_inter : y_inter
           else
@@ -309,7 +358,7 @@ module Hongbai
             end
           end
           colors = pattern.row(y_inter)
-          # TODO: Can this be done without using `to_a` operation?
+          # TODO: Can this be done without using the `to_a` operation?
           colors = colors.to_a.reverse if flip_h
           @buffer.push_sprite(colors, x, prior, sprite0)
         end
@@ -321,18 +370,10 @@ module Hongbai
         bank + (tile_number & 0xfe)
       end
 
-      # Ppu -> Nil
-      def get_backdrop_color
-        # VRAM $3F00 stores the universal background color
-        index = @vram.load(0x3f00) & 0x3f
-        r, g, b = get_color(index)
-        @backdrop.update(r, g, b)
-      end
-
-      # Ppu -> Nil | Integer -> nil
-      def put_pixel(color)
-        color ||= @backdrop
-        @renderer.draw_color = [color.r, color.g, color.b]
+      # Ppu -> Integer -> nil
+      def put_pixel(color_index)
+        color = @vram.palette.load_color(color_index)
+        @renderer.draw_color = color
         @renderer.draw_point(@x, @scanline)
       end
 
@@ -350,43 +391,84 @@ module Hongbai
   end
 
   class Regs
+    class PpuScroll < Struct.new(:x, :y, :scroll_is_in_x); end
+    class PpuAddr < Struct.new(:val, :nybble_is_hi); end
+
+    def initialize
+      @ppu_ctrl = 0
+      @ppu_mask = 0
+      @ppu_status = 0
+      @oam_addr = 0
+      @ppu_scroll = PpuScroll.new(0, 0, true)
+      @ppu_addr = PpuAddr.new(0, true)
+      @ppu_data = 0
+
+      @ppu_data_read_buffer = 0
+    end
+
+    attr_accessor :ppu_ctrl, :ppu_mask, :ppu_status, :oam_addr,
+                  :ppu_scroll, :ppu_addr, :ppu_data, :ppu_data_read_buffer
+        
     # Regs -> Bool -> Nil
     def set_in_vblank(b)
-        # TODO
+      b ? @ppu_status |= 0x80 : @ppu_status &= 0x7f
     end
 
     # Regs -> Bool -> Nil
     def set_sprite_zero_hit(b)
-        # TODO
+      b ? @ppu_status |= 0x40 : @ppu_status &= 0xbf
+    end
+
+    # Regs -> Bool -> Nil
+    def set_sprite_overflow(b)
+      b ? @ppu_status |= 0x20 : @ppu_status &= 0xdf
     end
 
     # Regs -> Bool
     def show_background?
-        # TODO
+      ((@ppu_mask >> 3) & 1) == 1
     end
 
     # Regs -> Bool
     def show_sprites?
-        # TODO
-    end
-
-    # Regs -> Integer
-    # return 0 or 0x1000
-    def bg_pattern_table_addr
-    end
-
-    # Regs -> Integer
-    # return 8 or 16
-    def sprite_height
+      ((@ppu_mask >> 4) & 1) == 1
     end
 
     # Regs -> Integer
     # return $2000 or $2400 or $2800 or $2c00
     def nametable_base
+      (@ppu_ctrl & 3) * 0x400 + 0x2000
+    end
+
+    def vram_addr_increment
+      ((@ppu_ctrl >> 2) & 1).zero? ? 1 : 32
+    end
+
+    # Regs -> Integer
+    # return 0 or 0x1000
+    def sprite_pattern_table_addr
+      ((@ppu_ctrl >> 3) & 1) * 0x1000
+    end
+
+    # Regs -> Integer
+    # return 0 or 0x1000
+    def bg_pattern_table_addr
+      ((@ppu_ctrl >> 4) & 1) * 0x1000
+    end
+
+    # Regs -> Integer
+    # return 8 or 16
+    def sprite_height_mode
+      ((@ppu_ctrl >> 5) & 1) * 8 + 8
+    end
+
+    # Regs -> Bool
+    def generate_vblank_nmi?
+      ((@ppu_ctrl >> 7) & 1) == 1
     end
   end
 
-  class Oam; end
+  class Oam < Array; end
 
   class Oam2
     def initialize
@@ -460,25 +542,55 @@ module Hongbai
   end
 
   class Vram
-  end
+    # Memory map
+    # $0000 - $1fff pattern table (rom)
+    # $2000 - $2fff 4 nametables
+    # $3000 - $3eff mirrors of $2000 - $2eff
+    # $3f00 - $3f1f palette
+    # $3f20 - $3fff mirrors of $3f00 - $3f1f
+    def initialize(rom)
+      @rom = rom
+      @ram = Array.new(0x800, 0)
+      @palette = Palette.new
+    end
 
-  class Color < Struct.new(:r, :g, :b)
-    def update(r, g, b)
-      self.r = r
-      self.g = g
-      self.b = b
+    attr_reader :palette, :rom
+
+    def load(addr)
+      if addr < 0x2000
+        @rom.chr_load(addr)
+      elsif addr < 0x3f00
+        addr = @rom.mirroring.mirror(addr & 0xfff)
+        @ram[addr]
+      elsif addr < 0x4000
+        addr &= 0x1f
+        @palette.load(addr)
+      else
+        raise "Unreachable vram address #{addr}"
+      end
+    end
+
+    def store(addr, val)
+      if addr < 0x2000
+        @rom.chr_store(addr, val)
+      elsif addr < 0x3f00
+        addr = @rom.mirroring_mode.mirror(addr & 0xfff)
+        @ram[addr] = val
+      elsif addr < 0x4000
+        addr &= 0x1f
+        @palette.store(addr, val)
+      else
+        raise "Unreachable vram address #{addr}"
+      end
     end
   end
 
-  # A tile is a 8*8 Matrix of Color
-  class Tile < Matrix; end
-
-  class OutputItem < Struct.new(:color, :from_sprite_0, :above_bg); end
-
   class Output
+    class Item < Struct.new(:color, :from_sprite_0, :above_bg); end
+
     def initialize
       @may_hit_sprite_0 = false
-      @items = Array.new(SCREEN_WIDTH) { OutputItem.new }
+      @items = Array.new(SCREEN_WIDTH) { Item.new }
     end
 
     attr_accessor :may_hit_sprite_0
@@ -492,28 +604,28 @@ module Hongbai
       end
     end
 
-    # Output -> Integer -> Color
+    # Output -> Integer -> ColorIndex
     def [](n)
       @items[n].color
     end
 
-    # Output -> Array<Color> -> Integer -> Bool -> Bool -> Nil
+    # Output -> Array<ColorIndex> -> Integer -> Bool -> Bool -> Nil
     # where colors.ength == 8
-    # x_offset >= 0; <= 247
     def push_sprite(colors, x_offset, above_bg, from_sprite_0)
       i = x_offset
       colors.each do |c|
-        if @items[i].above_bg.nil? && i < SCREEN_WIDTH
-          # No sprite on this dot 
-          @tiems[i].color = c
-          @items[i].from_sprite_0 = from_sprite_0
-          @items[i].above_bg = above_bg
+        item = @items[i]
+        if item && item.above_bg.nil? 
+          # No sprite already on this dot 
+          item.color = c
+          item.from_sprite_0 = from_sprite_0
+          item.above_bg = above_bg
         end
         i += 1
       end
     end
 
-    # Output -> Array<Color> -> Range -> Integer -> Bool
+    # Output -> Array<ColorIndex> -> Range -> Integer -> Bool
     # Return true if sprite 0 hits, return false otherwise.
     def push_bg(colors, range, x_offset)
       i = x_offset
@@ -523,7 +635,7 @@ module Hongbai
         range.each do |n|
           item = @items[i]
           c = colors[n]
-          if item.from_sprite_0 && !item.color.nil? && !c.nil?
+          if item.from_sprite_0 && !item.color.zero? && !c.zero?
             hit = true
           end
           push_bg_color(c, i)
@@ -541,14 +653,70 @@ module Hongbai
     end
 
     private
-      # Output -> Color -> Integer -> Nil
+      # Output -> ColorIndex -> Integer -> Nil
       # Insert a background color at the index
       def push_bg_color(color, index)
         item = @items[index]
-        unless !item.color.nil? && item.above_bg
+        unless !item.color.zero? && item.above_bg
           @items[index].color = color
         end
       end
+  end
+
+  class Palette
+    PALETTE = [
+      124,124,124,    0,0,252,        0,0,188,        68,40,188,
+      148,0,132,      168,0,32,       168,16,0,       136,20,0,
+      80,48,0,        0,120,0,        0,104,0,        0,88,0,
+      0,64,88,        0,0,0,          0,0,0,          0,0,0,
+      188,188,188,    0,120,248,      0,88,248,       104,68,252,
+      216,0,204,      228,0,88,       248,56,0,       228,92,16,
+      172,124,0,      0,184,0,        0,168,0,        0,168,68,
+      0,136,136,      0,0,0,          0,0,0,          0,0,0,
+      248,248,248,    60,188,252,     104,136,252,    152,120,248,
+      248,120,248,    248,88,152,     248,120,88,     252,160,68,
+      248,184,0,      184,248,24,     88,216,84,      88,248,152,
+      0,232,216,      120,120,120,    0,0,0,          0,0,0,
+      252,252,252,    164,228,252,    184,184,248,    216,184,248,
+      248,184,248,    248,164,192,    240,208,176,    252,224,168,
+      248,216,120,    216,248,120,    184,248,184,    184,248,216,
+      0,252,252,      248,216,248,    0,0,0,          0,0,0
+    ]
+    
+    class Item < Struct.new(:val, :color); end
+
+    def self.get_color(index)
+      r = PALETTE[index * 3 + 2]
+      g = PALETTE[index * 3 + 1]
+      b = PALETTE[index * 3 + 0]
+      return r, g, b
+    end
+
+    def initialize
+      # rus from $3f00 to $3f1f, 32 bytes
+      @items = Array.new(32) { Item.new(0, [0, 0, 0]) }
+      # Mirroring
+      [0x10, 0x14, 0x18, 0x1c].each do |addr|
+        @items[addr] = @items[addr - 0x10]
+      end
+    end
+
+    def get_color(color_index)
+      @items[color_index].color
+    end
+
+    def load(addr)
+      @items[addr].val
+    end
+
+    def store(addr, val)
+      item = @items[addr]
+      r, g, b = Palette.get_color(val & 0x3f)
+      item.val = val
+      item.color[0] = r
+      item.color[1] = g
+      item.color[2] = b
+    end
   end
 end
 
