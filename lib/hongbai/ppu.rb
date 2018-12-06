@@ -13,11 +13,7 @@ module Hongbai
     LAST_SCANLINE = 261
 
     # initialize: Rom -> Ppu
-    def initialize(rom)
-      win = SDL2::Window.create("hongbai",
-                                SDL2::Window::POS_CENTERED,
-                                SDL2::Window::POS_CENTERED,
-                                SCREEN_WIDTH, SCREEN_HEIGHT, 0)
+    def initialize(rom, win)
       @renderer = win.create_renderer(-1, 0)
       @vram = Vram.new(rom)
       @next_scanline_cycle = CYCLES_PER_SCANLINE
@@ -45,7 +41,7 @@ module Hongbai
 
       @sprite_height ||= @regs.sprite_height_mode
 
-      if cpu_cycle_count >= @next_scanline_cycle
+      while @next_scanline_cycle < cpu_cycle_count
         if @scanline < SCREEN_HEIGHT
           render_scanline
         end
@@ -99,7 +95,12 @@ module Hongbai
       end
     end
 
-    # TODO: oam dma
+    # Ppu -> Integer -> Nil
+    # Public for OAM DMA
+    def write_oam_data(val)
+      @oam[@regs.oam_addr] = val
+      @regs.oam_addr = (@regs.oam_addr + 1) & 0xff
+    end
 
     private
       # Ppu -> Integer
@@ -151,12 +152,6 @@ module Hongbai
         addr = @regs.ppu_addr.val & 0x3fff
         @vram.store(addr, val)
         @regs.ppu_addr.val += @regs.vram_addr_increment
-      end
-
-      # Ppu -> Integer -> Nil
-      def write_oam_data(val)
-        @oam[@regs.oam_addr] = val
-        @regs.oam_addr = (@regs.oam_addr + 1) & 0xff
       end
 
       # Ppu -> Integer -> Integer -> Tile
@@ -721,10 +716,6 @@ module Hongbai
 end
 
 #
-#      SDL2.init(SDL2::INIT_TIMER |
-#                SDL2::INIT_AUDIO |
-#                SDL2::INIT_VIDEO |
-#                SDL2::INIT_EVENTS)
 
 #references:
 #https://courses.cit.cornell.edu/ee476/FinalProjects/s2009/bhp7_teg25/bhp7_teg25/
