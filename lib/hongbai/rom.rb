@@ -94,14 +94,25 @@ module Hongbai
   class Mirroring
     class Vertical < self
       def self.to_s; "Vertical" end
+
+      # Map mirrored nametable addressed to their real RAM addresses 
+      def mirror(addr); addr % 0x800 end
     end
 
     class Horizontal < self
       def self.to_s; "Horizontal" end
+
+      def mirror(addr)
+        if addr < 0x800
+          addr % 400
+        else
+          (addr - 0x800) % 0x400 + 0x400
+        end
+      end
     end
 
     class FourScreens < self
-      def self.to_s; "FourScreens" end
+      def self.to_s; "4-Screen" end
     end
   end
 
@@ -118,13 +129,13 @@ module Hongbai
     end
 
     # Read only
-    def prg_set(_addr, _val); end
+    def prg_store(_addr, _val); end
 
     def chr_load(addr)
       @chr_rom[addr]
     end
 
     # Read only
-    def chr_set(_addr, _val); end
+    def chr_store(_addr, _val); end
   end
 end

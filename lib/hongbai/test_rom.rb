@@ -9,7 +9,7 @@ class RomTest < MiniTest::Test
     assert(!rom.nil?)
     # mapper test
     methods = rom.methods
-    [:next_scanline_irq, :prg_load, :prg_set, :chr_load, :chr_set].each do |m|
+    [:next_scanline_irq, :prg_load, :prg_store, :chr_load, :chr_store].each do |m|
       assert(methods.include?(m), "#{m} not defined")
     end
 
