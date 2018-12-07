@@ -3,7 +3,7 @@ module Hongbai
     def initialize(ppu, rom)
       @ppu = ppu
       @rom = rom
-      @ram = Array.new(0x800)
+      @ram = Array.new(0x800, 0)
 
       @dma_triggered = nil
     end
