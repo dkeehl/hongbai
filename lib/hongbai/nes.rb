@@ -32,19 +32,19 @@ module Hongbai
       @cpu.step
 
       if page = @mem.dma_triggered
-        cycles = @cpu.counter.odd? ? 514 : 513
+        cycles = @cpu.cycle.odd? ? 514 : 513
         @cpu.suspend(cycles)
         do_dma(page)
       end
 
-      vblank_nmi, scanline_irq = @ppu.step(@cpu.counter)
+      vblank_nmi, scanline_irq = @ppu.step(@cpu.cycle)
       @cpu.nmi if vblank_nmi
       @cpu.irq if scanline_irq
     end
 
     def do_dma(page)
       start = page << 8
-      256.times {|i| @ppu.write_oam(@mem.load(start + i)) }
+      256.times {|i| @ppu.write_oam_data(@mem.read(start + i)) }
       @mem.dma_triggered = nil
     end
   end

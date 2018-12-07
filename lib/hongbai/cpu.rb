@@ -141,15 +141,19 @@ module Hongbai
       @p = StatusRegister.new
       @counter = 0
 
-      #@sp.load(0xff)
+      @p.load(0x34)
+      @sp.load(0xfd)
+      @pc.load(read_u16(RESET_VECTOR))
     end
-
-    attr_reader :counter
 
     def step
       opcode = @m.fetch(@pc.value)
-      c = decode(opcode)
-      self.send(*c)
+      run(opcode)
+      # c = Cpu.decode(opcode)
+      # send(*c)
+      #if @log_on
+      #  puts c.to_s
+      #end
     end
 
     def suspend(cycles)
@@ -157,13 +161,12 @@ module Hongbai
     end
 
     def nmi
+      #@log_on = true
       push(@pc.value >> 8)
       push(@pc.value & 0xff)
       push(@p.value)
-      lo = @m.read(NMI_VECTOR)
-      disable_interrupt
-      hi = @m.read(NMI_VECTOR + 1)
-      @pc.value = (hi << 8) | lo
+      @p.disable_interrupt
+      @pc.load(read_u16(NMI_VECTOR))
     end
 
     def irq
@@ -172,10 +175,14 @@ module Hongbai
       push(@pc.value >> 8)
       push(@pc.value & 0xff)
       push(@p.value)
-      lo = @m.read(BRK_VECTOR)
-      disable_interrupt
-      hi = @m.read(BRK_VECTOR + 1)
-      @pc.value = (hi << 8) | lo
+      @p.disable_interrupt
+      @pc.load(read_u16(BRK_VECTOR))
+    end
+
+    def read_u16(addr)
+      lo = @m.read(addr)
+      hi = @m.read(addr + 1)
+      (hi << 8) | lo
     end
     #############################
     #States accessors
@@ -215,7 +222,7 @@ module Hongbai
     #########################
     #OPCODES
     #########################
-    def decode(opcode)
+    def self.decode(opcode)
       case opcode
       when 0x69 then [:adc, :immediate,   2, 2]
       when 0x65 then [:adc, :zero_page,   2, 3]
@@ -226,14 +233,14 @@ module Hongbai
       when 0x61 then [:adc, :indirect_x,  2, 6]
       when 0x71 then [:adc, :indirect_y,  2, 5]
 
-      when 0x29 then [:and, :immediate,   2, 2]
-      when 0x25 then [:and, :zero_page,   2, 3]
-      when 0x35 then [:and, :zero_page_x, 2, 4]
-      when 0x2d then [:and, :absolute,    3, 4]
-      when 0x3d then [:and, :absolute_x,  3, 4]
-      when 0x39 then [:and, :absolute_y,  3, 4]
-      when 0x21 then [:and, :indirect_x,  2, 6]
-      when 0x31 then [:and, :indirect_y,  2, 5]
+      when 0x29 then [:and_, :immediate,   2, 2]
+      when 0x25 then [:and_, :zero_page,   2, 3]
+      when 0x35 then [:and_, :zero_page_x, 2, 4]
+      when 0x2d then [:and_, :absolute,    3, 4]
+      when 0x3d then [:and_, :absolute_x,  3, 4]
+      when 0x39 then [:and_, :absolute_y,  3, 4]
+      when 0x21 then [:and_, :indirect_x,  2, 6]
+      when 0x31 then [:and_, :indirect_y,  2, 5]
 
       when 0x0a then [:asl, :accumulator, 1, 2]
       when 0x06 then [:asl, :zero_page,   2, 5]
@@ -400,7 +407,6 @@ module Hongbai
       when 0x9a then [:txs, :implied,     1, 2]
       when 0x98 then [:tya, :implied,     1, 2]
 
-      else raise "Unknown Opcode #{opcode}"
       end
     end
 
@@ -421,13 +427,13 @@ module Hongbai
         addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
       when :absolute_x
         addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
-        if addr & 0xff00 != (addr + @x.value) & 0xff
+        if addr & 0xff00 != (addr + @x.value) & 0xff00
           @counter += 1
         end
         addr += @x.value
       when :absolute_y
         addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
-        if addr & 0xff00 != (addr + @y.value) & 0xff
+        if addr & 0xff00 != (addr + @y.value) & 0xff00
           @counter += 1
         end
         addr += @y.value
@@ -441,7 +447,7 @@ module Hongbai
       when :indirect_y
         addr = @m.read(@pc.value + 1)
         addr = @m.read(addr) | @m.read(addr + 1) << 8
-        if addr & 0xff00 != (addr + @y.value) & 0xff
+        if addr & 0xff00 != (addr + @y.value) & 0xff00
           @counter += 1
         end
         addr += @y.value
@@ -527,7 +533,8 @@ module Hongbai
     end
 
     #2.AND
-    def and(addressing_mode, bytes, cycles)
+    # Add an underscore to avoid conflict with the `and` keyword
+    def and_(addressing_mode, bytes, cycles)
       addr = self.addressing(addressing_mode)
       oper = @m.read(addr)
 
@@ -1016,8 +1023,8 @@ module Hongbai
     #42.RTI
     def rti(addressing_mode, bytes, cycles)
       @p.load(self.pull | 0x20)
-      addr_high = self.pull
       addr_low = self.pull
+      addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
 
       @counter += cycles
@@ -1167,5 +1174,61 @@ module Hongbai
       @pc.step bytes
       @counter += cycles
     end
+
+    # From here, define a binary search version of `decode`
+    #
+    def self.unknown_op
+      "raise \"Unkown op code \#{op}\""
+    end
+
+    # generate a method call from the array returned from `decode`
+    # args: [method, address_mode, bytes, cycles]
+    def self.send_args(args)
+      method, addr_mode, bytes, cy = *args
+      "#{method}(:#{addr_mode}, #{bytes}, #{cy})"
+    end
+
+    def self.binary_search_opcode(top, bottom)
+      if top <= bottom
+        raise "Illegal arguments, top should be greater than bottom, but top = #{top} bottom = #{bottom}"
+      end
+
+      if top - bottom == 1 # The base case
+        top_branch = decode(top)
+        bottom_branch = decode(bottom)
+        if top_branch.nil? && bottom_branch.nil?
+          # Both opcode are unknown
+          unknown_op
+        elsif top_branch.nil?
+          "if op == #{bottom} then #{send_args(bottom_branch)} else #{unknown_op} end"
+        elsif bottom_branch.nil?
+          "if op == #{top} then #{send_args(top_branch)} else #{unknown_op} end"
+        else
+          "if op == #{top} then #{send_args(top_branch)} else #{send_args(bottom_branch)} end"
+        end
+      else # Recursive defination
+        mid = (top + bottom) / 2
+        "if op > #{mid}\n"\
+          "#{binary_search_opcode(top, mid + 1)}\n"\
+        "else\n"\
+          "#{binary_search_opcode(mid, bottom)}\n"\
+        "end"
+      end
+    end
+
+    def self.static_method_call
+      defination = "case op\n"
+      (0..255).each do |i|
+        if c = decode(i)
+          defination += "when #{i} then #{send_args(c)}\n"
+        end
+      end
+      defination += "else #{unknown_op} end"
+    end
+
+    #defination = binary_search_opcode(255, 0)
+    defination = static_method_call
+
+    class_eval("def run(op); #{defination} end")
   end
 end

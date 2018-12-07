@@ -61,7 +61,7 @@ module Hongbai
       "TV System: #{@tv_system}\n"
     end
 
-    # mapper 0
+    attr_reader :mirroring
 
     private
       def self.new(prg_rom, chr_rom, trainer, mapper, mirroring, tv_system)
@@ -78,6 +78,7 @@ module Hongbai
 
         make_mapper
       end
+
 
       def make_mapper
         # Only support mapper0 at the moment
@@ -96,13 +97,13 @@ module Hongbai
       def self.to_s; "Vertical" end
 
       # Map mirrored nametable addressed to their real RAM addresses 
-      def mirror(addr); addr % 0x800 end
+      def self.mirror(addr); addr % 0x800 end
     end
 
     class Horizontal < self
       def self.to_s; "Horizontal" end
 
-      def mirror(addr)
+      def self.mirror(addr)
         if addr < 0x800
           addr % 400
         else
@@ -119,13 +120,13 @@ module Hongbai
   # Mapper 0
   module Nrom
     def mapper_init
-      @prg_addr_mask = @prg_rom.length > 16384 ? 0x7ffff : 0x3ffff
+      @prg_addr_mask = @prg_rom.length > 16384 ? 0x7fff : 0x3fff
     end
 
     def next_scanline_irq; false end
 
     def prg_load(addr)
-      addr < 0x80000 ? 0 : @prg_rom[addr & @prg_addr_mask]
+      addr < 0x8000 ? 0 : @prg_rom[addr & @prg_addr_mask]
     end
 
     # Read only
