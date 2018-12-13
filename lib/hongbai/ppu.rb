@@ -38,6 +38,8 @@ module Hongbai
 
       # TODO: This is a hack to speed up. But it doesn't work with all mappers
       @pattern_table = Matrix.build(512, 8) {|row, col| build_tile(row, col) }
+
+      @trace = false
     end
 
     attr_reader :frame, :scanline
@@ -47,13 +49,15 @@ module Hongbai
     def step(cpu_cycle_count)
       vblank_nmi, scanline_irq = false, false
 
+      if @scanline == 176 &&
+          (@frame > 30 && @frame < 40 || @frame > 510 && @frame < 530)
+        @trace = true
+      end
+
       @sprite_height ||= @regs.sprite_height_mode
 
       while @next_scanline_cycle < cpu_cycle_count
         if @scanline < SCREEN_HEIGHT
-          #if @scroll_x > 0
-          #  STDERR.puts "frame #{@frame}, line #{@scanline} scroll_x #{@scroll_x}"
-          #end
           render_scanline
         end
 
@@ -74,6 +78,7 @@ module Hongbai
         @next_scanline_cycle += CYCLES_PER_SCANLINE
       end
 
+      @trace = false
       return vblank_nmi, scanline_irq
     end
 
@@ -239,7 +244,7 @@ module Hongbai
 
 
       # Render a tile. (Only the current scanline)
-      # Ppu -> Matrix<ColorIndex> -> Nil | Range -> nil
+      # Ppu -> Array<ColorIndex> -> Nil | Range -> nil
       def render_tile_line(bg_colors, range = (0..7))
         if @regs.show_background?
           if @regs.show_sprites?
@@ -407,82 +412,6 @@ module Hongbai
   end
 
   class Regs
-    class Address
-      def initialize
-        # 3 bits
-        @fine_y_offset = 0
-        # 1 bit
-        @nametable_v = 0
-        # 1 bit
-        @nametable_h = 0
-        # 5 bits
-        @coarse_y_offset = 0
-        # 5 bits
-        @coarse_x_offset = 0
-      end
-
-      attr_accessor :fine_y_offset, :nametable_v, :nametable_h,
-        :coarse_y_offset, :coarse_x_offset
-
-      def switch_h
-        @nametable_h ^= 1
-      end
-
-      def switch_v
-        @nametable_v ^= 1
-      end
-
-      def coarse_x_increment
-        if @coarse_x_offset == 31
-          @coarse_x_offset = 0
-          switch_h
-        else
-          @coarse_x_offset += 1
-        end
-      end
-
-      def y_increment
-        if @fine_y_offset < 7
-          @fine_y_offset += 1
-        else
-          @fine_y_offset = 0
-          if @coarse_y_offset == 29
-            @coarse_y_offset = 0
-            switch_v
-          elsif @coarse_y_offset == 31
-            @coarse_y_offset = 0
-          else
-            @coarse_y_offset += 1
-          end
-        end
-      end
-
-      def copy_x(other)
-        @nametable_h = other.nametable_h
-        @coarse_x_offset = other.coarse_x_offset
-      end
-
-      def copy_y(other)
-        @fine_y_offset = other.fine_y_offset
-        @nametable_v = other.nametable_v
-        @coarse_y_offset = other.coarse_y_offset
-      end
-
-      # Into the numberic address of the tile which this address points to 
-      def tile
-        0x2000 |
-        (@nametable_v << 11) | (@nametable_h << 10) |
-        (@coarse_y_offset << 5) | @coarse_x_offset
-      end
-
-      # Into the numberic address of the tile's attribute
-      def attribute
-        0x23c0 |
-        (@nametable_v << 11) | (@nametable_h << 10) |
-        ((@coarse_y_offset < 1) & 0x38) | (@coarse_x_offset >> 2)
-      end
-    end
-
     def initialize
       @ppu_ctrl = 0
       @ppu_mask = 0
@@ -578,6 +507,23 @@ module Hongbai
 
     def []=(n, x)
       @arr[n] = x
+    end
+    
+    def to_s
+      str = ""
+      i = 0
+      while i < 64
+        y = @arr[i * 4]
+        if y > 240 || y.zero?
+          break
+        else
+          num = @arr[i * 4 + 1]
+          x = @arr[i * 4 + 3]
+          str += "\##{num} (#{x}, #{y}) "
+          i += 1
+        end
+      end
+      str
     end
   end
 
@@ -721,13 +667,12 @@ module Hongbai
     end
 
     # Output -> Array<ColorIndex> -> Integer -> Bool -> Bool -> Nil
-    # where colors.ength == 8
+    # where colors.length == 8
     def push_sprite(colors, x_offset, above_bg, from_sprite_0)
       i = x_offset
       colors.each do |c|
         item = @items[i]
-        if item.above_bg.nil? 
-          # No sprite already on this dot 
+        if item && (item.color.zero? || (above_bg && !item.above_bg))
           item.color = c
           item.from_sprite_0 = from_sprite_0
           item.above_bg = above_bg
@@ -768,7 +713,7 @@ module Hongbai
       # Insert a background color at the index
       def push_bg_color(color, index)
         item = @items[index]
-        unless !item.color.zero? && item.above_bg
+        unless !item.color.zero? && item.above_bg || color.zero?
           @items[index].color = color
         end
       end

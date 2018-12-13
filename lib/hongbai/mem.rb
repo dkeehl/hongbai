@@ -6,9 +6,11 @@ module Hongbai
       @ram = Array.new(0x800, 0)
 
       @dma_triggered = nil
+
+      @trace = false
     end
 
-    attr_accessor :dma_triggered
+    attr_accessor :dma_triggered, :trace
 
     # Memory map
     # $0000 - $07ff 2KB internal RAM
@@ -22,6 +24,9 @@ module Hongbai
     # $4020 - $ffff cartridge space
     def read(addr)
       if addr < 0x2000
+        #if @trace && (addr == 0x0086 || addr == 0x03ad)
+        #  puts "read %04x" % addr
+        #end
         @ram[addr & 0x7ff]
       elsif addr < 0x4000
         @ppu.load(addr)
@@ -43,6 +48,9 @@ module Hongbai
 
     def load(addr, val)
       if addr < 0x2000
+        #if @trace && (addr == 0x0086 || addr == 0x03ad)
+        #  puts "write to %04x val = %d" % [addr, val]
+        #end
         @ram[addr & 0x7ff] = val
       elsif addr < 0x4000
         @ppu.store(addr, val)
