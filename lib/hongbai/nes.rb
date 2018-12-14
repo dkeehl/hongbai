@@ -2,6 +2,7 @@ require './cpu'
 require './ppu'
 require './rom'
 require './mem'
+require './input'
 
 module Hongbai
   class Nes
@@ -14,10 +15,14 @@ module Hongbai
                                   SDL2::Window::POS_CENTERED,
                                   SDL2::Window::POS_CENTERED,
                                   SCREEN_WIDTH, SCREEN_HEIGHT, 0)
+        map = KeyMap.default_1p
+        controller = Controller.new(map)
+        input = Input.new(controller)
+
         ppu = Ppu.new(rom, win)
-        mem = Memory.new(ppu, rom)
+        mem = Memory.new(ppu, rom, input)
         cpu = Cpu.new(mem)
-        nes = new(cpu, ppu, mem)
+        nes = new(cpu, ppu, mem, input)
         #begin
           loop { nes.step }
         #rescue StandardError => e
@@ -27,10 +32,12 @@ module Hongbai
       end
     end
 
-    def initialize(cpu, ppu, mem)
+    def initialize(cpu, ppu, mem, input)
       @cpu = cpu
       @ppu = ppu
       @mem = mem
+      @input = input
+
       @trace = false
       @count = 0
     end
@@ -67,10 +74,11 @@ module Hongbai
         do_dma(page)
       end
 
-      vblank_nmi, scanline_irq = @ppu.step(@cpu.cycle)
+      vblank_nmi, scanline_irq, new_frame = @ppu.step(@cpu.cycle)
 
       @cpu.nmi if vblank_nmi
       @cpu.irq if scanline_irq
+      @input.poll if new_frame
     end
 
     def do_dma(page)

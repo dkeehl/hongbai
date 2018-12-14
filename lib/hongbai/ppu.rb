@@ -47,7 +47,7 @@ module Hongbai
     # step : Ppu -> Int -> [Bool, Bool]
     # The three bools are in order: vblank_nmi, scanline_irq
     def step(cpu_cycle_count)
-      vblank_nmi, scanline_irq = false, false
+      vblank_nmi, scanline_irq, new_frame = false, false, false
 
       if @scanline == 176 &&
           (@frame > 30 && @frame < 40 || @frame > 510 && @frame < 530)
@@ -73,13 +73,14 @@ module Hongbai
           @renderer.present
           @scanline = 0
           @frame += 1
+          new_frame = true
         end
 
         @next_scanline_cycle += CYCLES_PER_SCANLINE
       end
 
       @trace = false
-      return vblank_nmi, scanline_irq
+      return vblank_nmi, scanline_irq, new_frame
     end
 
     # Take a Cpu memory space address, return the corresponding register value

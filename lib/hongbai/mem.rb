@@ -1,8 +1,9 @@
 module Hongbai
   class Memory
-    def initialize(ppu, rom)
+    def initialize(ppu, rom, input)
       @ppu = ppu
       @rom = rom
+      @input = input
       @ram = Array.new(0x800, 0)
 
       @dma_triggered = nil
@@ -31,14 +32,16 @@ module Hongbai
       elsif addr < 0x4000
         @ppu.load(addr)
       elsif addr == 0x4014
+        # dma
         #https://forums.nesdev.com/viewtopic.php?f=3&t=14120
         0x40
+      elsif addr == 0x4015
+        # TODO APU
+        0
       elsif addr == 0x4016
-        0
-        # TODO: "Unimplemented IO register"
-      elsif addr < 0x4018
-        0
-        # TODO: "Unimplemented APU register"
+        0x40 ^ @input.read_4016
+      elsif addr == 0x4017
+        0x40 ^ @input.read_4017
       elsif addr < 0x4020
         0
       else
@@ -57,8 +60,7 @@ module Hongbai
       elsif addr == 0x4014
         @dma_triggered = val
       elsif addr == 0x4016
-        # TODO: "Unimplemented IO register"
-        nil
+        @input.store(val)
       elsif addr < 0x4018
         nil
         # TODO: "Unimplemented APU register"
