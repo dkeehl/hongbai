@@ -144,6 +144,7 @@ module Hongbai
       @p.load(0x34)
       @sp.load(0xfd)
       @pc.load(read_u16(RESET_VECTOR))
+
       @trace = false
     end
 
@@ -151,14 +152,7 @@ module Hongbai
 
     def step
       opcode = @m.fetch(@pc.value)
-      #run(opcode)
-      c = Cpu.decode(opcode)
-      #if @trace
-      #  print "%02x #{c[0]}" % opcode
-      #  puts "## a: %02x, x: %02x, y: %02x, pc: %04x, p: %08b, sp: %02x" %
-      #    [@a.value, @x.value, @y.value, @pc.value, @p.value, @sp.value]
-      #end
-      send(*c)
+      run(opcode)
     end
 
     def suspend(cycles)

@@ -23,12 +23,7 @@ module Hongbai
         mem = Memory.new(ppu, rom, input)
         cpu = Cpu.new(mem)
         nes = new(cpu, ppu, mem, input)
-        #begin
-          loop { nes.step }
-        #rescue StandardError => e
-          #puts e
-          #puts nes.count
-        #end
+        loop { nes.step }
       end
     end
 
@@ -38,37 +33,15 @@ module Hongbai
       @mem = mem
       @input = input
 
+      # for debug
       @trace = false
       @count = 0
     end
 
-    attr_reader :count
-
     def step
-      #@frame = @ppu.frame
-      #if @frame == 33 && @ppu.scanline == 46
-      #  @trace = true
-      #  @cpu.trace = true
-      #  @mem.trace = true
-      #elsif @frame == 34 
-      #  @trace = false
-      #  @cpu.trace = false
-      #  @mem.trace = false
-      #end
-
-      #if @trace
-      #  print "frame #{@frame} scanline #{@ppu.scanline} step #{@count}: "
-      #end
       @cpu.step
 
-      #if @trace
-      #  @count += 1
-      #end
-
       if page = @mem.dma_triggered
-        #if @trace
-        #  puts "oma at step #{@count}"
-        #end
         cycles = @cpu.cycle.odd? ? 514 : 513
         @cpu.suspend(cycles)
         do_dma(page)

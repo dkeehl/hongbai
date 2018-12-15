@@ -49,11 +49,6 @@ module Hongbai
     def step(cpu_cycle_count)
       vblank_nmi, scanline_irq, new_frame = false, false, false
 
-      if @scanline == 176 &&
-          (@frame > 30 && @frame < 40 || @frame > 510 && @frame < 530)
-        @trace = true
-      end
-
       @sprite_height ||= @regs.sprite_height_mode
 
       while @next_scanline_cycle < cpu_cycle_count
@@ -79,7 +74,6 @@ module Hongbai
         @next_scanline_cycle += CYCLES_PER_SCANLINE
       end
 
-      @trace = false
       return vblank_nmi, scanline_irq, new_frame
     end
 
@@ -315,7 +309,7 @@ module Hongbai
         y = @oam[0]
         @oam2.insert(y)
         if sprite_on_scanline(y)
-          (1..3).each { |i| @oam2.push(@oam[i]) }
+          1.upto(3) { |i| @oam2.push(@oam[i]) }
           @oam2.has_sprite_zero = true
         end
 
@@ -324,7 +318,7 @@ module Hongbai
           y = @oam[n * 4]
           @oam2.insert(y)
           if sprite_on_scanline(y)
-            (1..3).each { |i| @oam2.push(@oam[n * 4 + i]) }
+            1.upto(3) { |i| @oam2.push(@oam[n * 4 + i]) }
           end
           n += 1
           return if n == 64
@@ -394,8 +388,7 @@ module Hongbai
 
       # Ppu -> Integer -> nil
       def put_pixel(color_index)
-        color = @vram.palette.get_color(color_index)
-        @renderer.draw_color = color
+        @renderer.draw_color = @vram.palette.get_color(color_index)
         @renderer.draw_point(@x, @scanline)
       end
 
@@ -722,32 +715,25 @@ module Hongbai
 
   class Palette
     PALETTE = [
-      124,124,124,    0,0,252,        0,0,188,        68,40,188,
-      148,0,132,      168,0,32,       168,16,0,       136,20,0,
-      80,48,0,        0,120,0,        0,104,0,        0,88,0,
-      0,64,88,        0,0,0,          0,0,0,          0,0,0,
-      188,188,188,    0,120,248,      0,88,248,       104,68,252,
-      216,0,204,      228,0,88,       248,56,0,       228,92,16,
-      172,124,0,      0,184,0,        0,168,0,        0,168,68,
-      0,136,136,      0,0,0,          0,0,0,          0,0,0,
-      248,248,248,    60,188,252,     104,136,252,    152,120,248,
-      248,120,248,    248,88,152,     248,120,88,     252,160,68,
-      248,184,0,      184,248,24,     88,216,84,      88,248,152,
-      0,232,216,      120,120,120,    0,0,0,          0,0,0,
-      252,252,252,    164,228,252,    184,184,248,    216,184,248,
-      248,184,248,    248,164,192,    240,208,176,    252,224,168,
-      248,216,120,    216,248,120,    184,248,184,    184,248,216,
-      0,252,252,      248,216,248,    0,0,0,          0,0,0
+      [124,124,124],    [0,0,252],        [0,0,188],        [68,40,188],
+      [148,0,132],      [168,0,32],       [168,16,0],       [136,20,0],
+      [80,48,0],        [0,120,0],        [0,104,0],        [0,88,0],
+      [0,64,88],        [0,0,0],          [0,0,0],          [0,0,0],
+      [188,188,188],    [0,120,248],      [0,88,248],       [104,68,252],
+      [216,0,204],      [228,0,88],       [248,56,0],       [228,92,16],
+      [172,124,0],      [0,184,0],        [0,168,0],        [0,168,68],
+      [0,136,136],      [0,0,0],          [0,0,0],          [0,0,0],
+      [248,248,248],    [60,188,252],     [104,136,252],    [152,120,248],
+      [248,120,248],    [248,88,152],     [248,120,88],     [252,160,68],
+      [248,184,0],      [184,248,24],     [88,216,84],      [88,248,152],
+      [0,232,216],      [120,120,120],    [0,0,0],          [0,0,0],
+      [252,252,252],    [164,228,252],    [184,184,248],    [216,184,248],
+      [248,184,248],    [248,164,192],    [240,208,176],    [252,224,168],
+      [248,216,120],    [216,248,120],    [184,248,184],    [184,248,216],
+      [0,252,252],      [248,216,248],    [0,0,0],          [0,0,0]
     ]
-    
+   
     class Item < Struct.new(:val, :color); end
-
-    def self.get_color(index)
-      b = PALETTE[index * 3 + 2]
-      g = PALETTE[index * 3 + 1]
-      r = PALETTE[index * 3 + 0]
-      return r, g, b
-    end
 
     def initialize
       # rus from $3f00 to $3f1f, 32 bytes
@@ -768,11 +754,8 @@ module Hongbai
 
     def store(addr, val)
       item = @items[addr]
-      r, g, b = Palette.get_color(val & 0x3f)
       item.val = val
-      item.color[0] = r
-      item.color[1] = g
-      item.color[2] = b
+      item.color = PALETTE[val & 0x3f]
     end
   end
 end
