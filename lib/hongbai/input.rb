@@ -1,3 +1,5 @@
+require_relative 'sdl/event'
+
 module Hongbai
   class Controller
     BUTTON_A = 0
@@ -16,8 +18,8 @@ module Hongbai
       @strobe = false
     end
 
-    def handle_key(key_ev, value)
-      case key_ev.sym
+    def handle_key(key_code, value)
+      case key_code
       when @key_map.a then @buttons[BUTTON_A] = value
       when @key_map.b then @buttons[BUTTON_B] = value
       when @key_map.select then @buttons[BUTTON_SELECT] = value
@@ -71,16 +73,7 @@ module Hongbai
     end
 
     def poll
-      while ev = SDL2::Event.poll
-        case ev
-        when SDL2::Event::Quit
-          exit
-        when SDL2::Event::KeyDown
-          @device.handle_key(ev, true)
-        when SDL2::Event::KeyUp
-          @device.handle_key(ev, false)
-        end
-      end
+      SDL2::Event.poll(@device)
     end
 
     # Read from $4016

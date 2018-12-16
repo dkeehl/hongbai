@@ -1,9 +1,9 @@
-require 'sdl2'
+require_relative 'sdl/video'
 require_relative './ppu'
 
 module Hongbai
   module TestSDL
-    SDL2.init(SDL2::INIT_VIDEO | SDL2::INIT_TIMER)
+    SDL2.Init(SDL2::INIT_VIDEO | SDL2::INIT_TIMER)
     win = SDL2::Window.create("test",
                              SDL2::Window::POS_CENTERED,
                              SDL2::Window::POS_CENTERED,
@@ -29,5 +29,6 @@ module Hongbai
     end
 
     win.destroy
+    SDL2.Quit
   end
 end
