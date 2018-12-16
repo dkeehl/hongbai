@@ -1,4 +1,4 @@
-require 'sdl2'
+require_relative 'sdl/video'
 require 'matrix'
 
 module Hongbai
