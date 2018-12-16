@@ -1,6 +1,6 @@
-require "hongbai/version"
-
-module Hongbai
-  class Error < StandardError; end
-  # Your code goes here...
-end
+require_relative 'hongbai/version'
+require_relative 'hongbai/nes'
+require_relative 'hongbai/rom'
+require_relative 'hongbai/input'
+require_relative 'hongbai/cpu'
+require_relative 'hongbai/ppu'

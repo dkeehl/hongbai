@@ -1,8 +1,8 @@
-require './cpu'
-require './ppu'
-require './rom'
-require './mem'
-require './input'
+require_relative './cpu'
+require_relative './ppu'
+require_relative './rom'
+require_relative './mem'
+require_relative './input'
 
 module Hongbai
   class Nes
