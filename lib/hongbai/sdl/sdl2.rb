@@ -22,6 +22,7 @@ module Hongbai
 
     functions = {
       Init: [[:uint32], :int],
+      Delay: [[:int], :void, blocking: true],
       Quit: [[], :void],
 
       # Video
@@ -35,6 +36,14 @@ module Hongbai
 
       # Events
       PollEvent: [[:pointer], :int],
+
+      # Audio
+      OpenAudioDevice: [[:string, :int, :pointer, :pointer, :int], :uint32, blocking: true],
+      PauseAudioDevice: [[:uint32, :int], :void, blocking: true],
+      CloseAudioDevice: [[:uint32], :void, blocking: true],
+      QueueAudio: [[:uint32, :pointer, :uint32], :int],
+      GetQueuedAudioSize: [[:uint32], :uint32],
+      ClearQueuedAudio: [[:uint32], :void],
     }
 
     functions.each do |name, params|
