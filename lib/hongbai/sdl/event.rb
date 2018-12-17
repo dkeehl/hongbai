@@ -11,7 +11,15 @@ module Hongbai
       control = {
         RETURN: "\r",
       }
+      # Define key code constants like
+      # A = 97
+      # B = 98
+      # .
+      # .
+      # .
+      # Z = 122
       alpha.each {|c| const_set(c.upcase, c.unpack('C')[0]) }
+      # Define other key codes
       control.merge(blank).each do |name, char|
         const_set(name, char.unpack('C')[0])
       end
