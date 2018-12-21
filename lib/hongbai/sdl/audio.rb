@@ -23,20 +23,22 @@ module Hongbai
       FORMAT = { 8 => AUDIO_S8, 16 => AUDIO_S16LSB }
       PACK = { 8 => "c*", 16 => "v*" }
 
-      def initialize(sample_rate = 44100, bit_depth = 16)
+      def initialize(sample_rate = 44100, bit_depth = 16, channels = 1)
         raise "Bit depth must be 8 or 16" unless bit_depth == 8 || bit_depth == 16
         @sample_rate = sample_rate
         @bit_depth = bit_depth
+        @channels = channels
         @pack = PACK[@bit_depth]
 
-        @delay = 1000 # in miliseconds
-        @buf_limit = sample_rate * bit_depth / 8 * @delay / 1000
+        @delay = 500 # in miliseconds
+        # bit rate * seconds of delay * 2
+        @buf_limit = sample_rate * channels * bit_depth / 8 * @delay / 1000 * 2
 
         desired = AudioSpec.new
         desired[:freq] = @sample_rate
         desired[:format] = FORMAT[@bit_depth]
-        desired[:channels] = 1
-        desired[:samples] = sample_rate / 60 * 2
+        desired[:channels] = @channels
+        desired[:samples] = @bit_depth * @channels * 128
         desired[:callback] = nil
         desired[:userdata] = nil
 
@@ -48,7 +50,7 @@ module Hongbai
 
       def set_buf_limit(size)
         @buf_limit = size
-        @delay = @buf_limit / @sample_rate / @bit_depth * 8 * 1000
+        @delay = @buf_limit / @channels / @sample_rate / @bit_depth * 8 * 1000 / 2
       end
 
       def close
@@ -61,11 +63,22 @@ module Hongbai
         #SDL2.ClearQueuedAudio(@dev) if SDL2.GetQueuedAudioSize(@dev) > @buf_limit
       end
 
+      # Functions for testing
       def play(data)
-        if SDL2.GetQueuedAudioSize(@dev) > @buf_limit
+        while SDL2.GetQueuedAudioSize(@dev) > @buf_limit
           SDL2.Delay(@delay)
         end
-        SDL2.QueueAudio(@dev, data, data.bytesize)
+        if SDL2.QueueAudio(@dev, data, data.bytesize).nonzero?
+          close
+          raise "SDL_QueueAudio failed"
+        end
+      end
+
+      def flush
+        # SDL keeps queuing some data repeatly. why?
+        while SDL2.GetQueuedAudioSize(@dev) > 8000
+          SDL2.Delay(@delay)
+        end
       end
     end
   end
