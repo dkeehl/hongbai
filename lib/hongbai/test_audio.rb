@@ -5,10 +5,10 @@ module Hongbai
     def self.load(file)
       File.open(file, 'r') do |f|
         meta = {}
-        chunk_id = f.read(4)
-        chunk_size = f.read(4).unpack('V')[0]
+        riff_id = f.read(4)
+        _chunk_size = f.read(4).unpack('V')[0]
         wave_id = f.read(4)
-        fmt_ck = f.read(4)
+        fmt_id = f.read(4)
         fmt_size = f.read(4).unpack('V')[0]
         meta[:format] = f.read(2).unpack('v')[0]
         meta[:channels] = f.read(2).unpack('v')[0]
@@ -16,18 +16,19 @@ module Hongbai
         meta[:data_rate] = f.read(4).unpack('V')[0]
         meta[:data_block_size] = f.read(2).unpack('v')[0]
         meta[:bit_per_sample] = f.read(2).unpack('v')[0]
-        data_ck = f.read(4)
+        data_id = f.read(4)
         meta[:data_size] = f.read(4).unpack('V')[0]
-        unless chunk_id == 'RIFF' && wave_id == 'WAVE' && fmt_ck == 'fmt ' &&
-            data_ck == 'data' 
-          raise "Invalid file format: chunk_id #{chunk_id}, wave_id #{wave_id}, "\
-            "fmt_ck #{fmt_ck}, data_ck #{data_ck}"
+        unless riff_id == 'RIFF' && wave_id == 'WAVE' && fmt_id == 'fmt ' &&
+            data_id == 'data' 
+          raise "Invalid file format: riff_id #{riff_id}, wave_id #{wave_id}, "\
+            "fmt_id #{fmt_id}, data_id #{data_id}"
         end
         raise "Unsupported fmt size #{fmt_size}" if fmt_size != 16
-        if chunk_size != fmt_size + meta[:data_size] + 28
-          raise "Wrong size. "\
-            "RIFF chunk: #{chunk_size}, fmt chunk #{fmt_size}, data chunk #{meta[:data_size]}"
-        end
+        # 20 = wave_id 4 + fmt_id 4 + fmt_size 4 + data_id 4 + data_size 4
+        #if chunk_size != fmt_size + meta[:data_size] + 20
+        #  raise "Wrong size. "\
+        #    "RIFF chunk: #{chunk_size}, fmt chunk #{fmt_size}, data chunk #{meta[:data_size]}"
+        #end
         if block_given?
           yield(meta, f)
         else
@@ -50,15 +51,20 @@ module Hongbai
 
   module TestAudio
     SDL2.Init(SDL2::INIT_AUDIO)
-    path = File.expand_path("../../../nes/audio.wav", __FILE__)
+    path = File.expand_path("../../../nes/piano.wav", __FILE__)
+    #path = File.expand_path("../../../nes/audio.wav", __FILE__)
+    #puts Wav.load(path)
     Wav.load(path) do |meta, f|
-      a = SDL2::Audio.new(meta[:sample_rate], meta[:bit_per_sample])
+      if meta[:format] != 1
+        puts "Compressed WAV is not supported"
+        abort
+      end
 
+      a = SDL2::Audio.new(meta[:sample_rate], meta[:bit_per_sample], meta[:channels])
       interval = 1 # in seconds
       chunk_size = meta[:data_rate] * interval
       while data = f.read(chunk_size); a.play(data) end
-      # waiting for playing the last chunk
-      SDL2.Delay(interval * 1000)
+      a.flush
       a.close
     end
   end
