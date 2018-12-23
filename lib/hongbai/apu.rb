@@ -42,8 +42,10 @@ module Hongbai
       # channels
       @pulse_1 = Pulse.new
       @pulse_2 = Pulse.new(true)
+      @triangle = Triangle.new
+      @noise = Noise.new
 
-      @mixer = Mixer.new(@pulse_1, @pulse_2)
+      @mixer = Mixer.new(@pulse_1, @pulse_2, @triangle, @noise)
       @buffer = []
       @output = []
       @cycle = 0
@@ -79,9 +81,11 @@ module Hongbai
     def clock_channels
       # The triangle channel's timer is clocked every cpu cycle;
       # other channels' timers are clocked every second cpu cycle.
+      @triangle.clock
       if @cycle.odd?
         @pulse_1.clock
         @pulse_2.clock
+        @noise.clock
       end
     end
 
@@ -111,14 +115,18 @@ module Hongbai
         if this_step.clk_envelopes
           @pulse_1.clock_envelope
           @pulse_2.clock_envelope
+          @noise.clock_envelope
         end
 
         if this_step.clk_length_counters
           @pulse_1.clock_length_counter
           @pulse_2.clock_length_counter
+          @triangle.clock_length_counter
+          @noise.clock_length_counter
         end
 
         if this_step.clk_linear_counter
+          @triangle.clock_linear_counter
         end
 
         if this_step.clk_irq
@@ -317,21 +325,150 @@ module Hongbai
     end
   end
 
+  class Triangle
+    SEQUENCE = [
+      15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
+    ]
+
+    def initialize
+      @period = 0 # In fact this is the period minus 1
+      @timer = 0
+      @step = 0
+      
+      # Linear counter
+      @linear_counter = 0
+      @linear_counter_reload = false
+      @counter_reload_value = 0
+      @control = false
+
+      @length_counter = LengthCounter.new
+    end
+
+    def write_0(val)
+      @length_counter.halt = @control = val[7] == 1
+      @counter_reload_value = val & 0x7f
+    end
+
+    def write_2(val)
+      @period = (@period & 0x700) | val
+    end
+
+    def write_3(val)
+      @period = (@period & 0xff) | ((val & 7) << 8)
+      @length_counter.write val
+      @linear_counter_reload = true
+    end
+
+    def clock
+      if @timer.zero?
+        @timer = @period
+        if @linear_counter.nonzero? && @length_counter.count.nonzero?
+          @step = (@step + 1) % 32
+        end
+      else
+        @timer -= 1
+      end
+    end
+
+    def clock_length_counter
+      @length_counter.clock
+    end
+
+    def clock_linear_counter
+      if @linear_counter_reload
+        @linear_counter = @counter_reload_value
+      elsif @linear_counter.nonzero?
+        @linear_counter -= 1
+      end
+      @linear_counter_reload = false unless @control
+    end
+
+    def silenced?
+      @linear_counter.zero? || @length_counter.count.zero? || @period < 2
+    end
+
+    def sample
+      silenced? ? 0 : SEQUENCE[@step]
+    end
+  end
+
+  class Noise
+    PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
+    
+    def initialize
+      @timer = 0
+      @period = PERIODS[0]
+      # Feedback shift register
+      @shift = 1
+      # Mode flag
+      @mode = false
+      @envelope = Envelope.new
+      @length_counter = LengthCounter.new
+    end
+
+    def write_0(val)
+      @envelope.write val
+      @length_counter.halt = val[5]
+    end
+
+    def write_2(val)
+      @mode = val[7] == 1
+      @period = PERIODS[val & 0xf]
+    end
+
+    def write_3(val)
+      @length_counter.write val
+      @envelope.restart
+    end
+
+    def clock
+      if @timer.zero?
+        @timer = @period
+        # clock shift register
+        feedback = @shift[0] ^ @shift[@mode ? 6 : 1]
+        @shift = (@shift >> 1) | (feedback << 14)
+      else
+        @timer -= 1
+      end
+    end
+
+    def clock_envelope
+      @envelope.clock
+    end
+
+    def clock_length_counter
+      @length_counter.clock
+    end
+
+    def silenced?
+      @shift[0] == 1 || @length_counter.count.zero?
+    end
+
+    def sample
+      silenced? ? 0 : @envelope.volume
+    end
+  end
+
+  class Dmc
+  end
+
   class Mixer
-    # Lookup tables
     PULSE_TABLE = (0..30).map {|n| n.zero? ? 0 : 95.52 / (8128.0 / n + 100) }
     TND_TABLE = (0..202).map {|n| n.zero? ? 0 : 163.67 / (24329.0 / n + 100) }
 
-    def initialize(pulse_1, pulse_2)
+    def initialize(pulse_1, pulse_2, triangle, noise)
       @pulse_1 = pulse_1
       @pulse_2 = pulse_2
+      @triangle = triangle
+      @noise = noise
     end
 
     def sample
       pulse_1 = @pulse_1.sample
       pulse_2 = @pulse_2.sample
-      triangle = 0
-      noise = 0
+      triangle = @triangle.sample
+      noise = @noise.sample
       dmc = 0
 
       pulse_out = PULSE_TABLE[pulse_1 + pulse_2]
