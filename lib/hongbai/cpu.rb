@@ -40,89 +40,123 @@ module Hongbai
     end
   end
 
-  class StatusRegister < Register
+  class StatusRegister
+    def initialize
+      @carry = false
+      @zero = false
+      @disable_interrupt = false
+      @decimal_mode = false
+      @break = false
+      @bit5 = 0b0010_0000
+      @overflow = false
+      @negative = false
+    end
+
+    attr_writer :carry, :zero, :overflow, :negative
+
+    def value
+      bit0 = @carry ? 0b0000_0001 : 0
+      bit1 = @zero  ? 0b0000_0010 : 0
+      bit2 = @disable_interrupt ? 0b0000_0100 : 0
+      bit3 = @decimal_mode ? 0b0000_1000 : 0
+      bit4 = @break ? 0b0001_0000 : 0
+      bit6 = @overflow ? 0b0100_0000 : 0
+      bit7 = @negative ? 0b1000_0000 : 0
+      bit0 + bit1 + bit2 + bit3 + bit4 + @bit5 + bit6 + bit7
+    end
+
+    def load(n)
+      @carry = n[0] == 1
+      @zero = n[1] == 1
+      @disable_interrupt = n[2] == 1
+      @decimal_mode = n[3] == 1
+      @break = n[4] == 1
+      @overflow = n[6] == 1
+      @negative = n[7] == 1
+    end
+
     def carry_flag?
-      @value & 0x1 == 0x1
+      @carry
     end
 
     def set_carry_flag
-      @value |= 0x1
+      @carry = true
     end
 
     def clear_carry_flag
-      @value &= 0xfe
+      @carry = false
     end
 
     def zero_flag?
-      @value & 0x2 == 0x2
+      @zero
     end
 
     def set_zero_flag
-      @value |= 0x2
+      @zero = true
     end
 
     def clear_zero_flag
-      @value &= 0xfd
+      @zero = false
     end
 
     def interrupt_disabled?
-      @value & 0x4 == 0x4
+      @disable_interrupt
     end
 
     def disable_interrupt
-      @value |= 0x4
+      @disable_interrupt = true
     end
-
+    
     def enable_interrupt
-      @value &= 0xfb
+      @disable_interrupt = false
     end
 
     def decimal_mode?
-      @value & 0x8 == 0x8
+      @decimal_mode
     end
 
     def set_decimal_mode
-      @value |= 0x8
+      @decimal_mode = true
     end
 
     def unset_decimal_mode
-      @value &= 0xf7
+      @decimal_mode = false
     end
 
     def break_commond?
-      @value & 0x10 == 0x10
+      @break
     end
 
     def set_break_commond
-      @value |= 0x10
+      @break = true
     end
 
     def unset_break_commond
-      @value &= 0xef
+      @break = false
     end
 
     def overflow_flag?
-      @value & 0x40 == 0x40
+      @overflow
     end
 
     def set_overflow_flag
-      @value |= 0x40
+      @overflow = true
     end
 
     def clear_overflow_flag
-      @value &= 0xbf
+      @overflow = false
     end
 
     def negative_flag?
-      @value & 0x80 == 0x80
+      @negative
     end
 
     def set_negative_flag
-      @value |= 0x80
+      @negative = true
     end
 
     def clear_negative_flag
-      @value &= 0x7f
+      @negative = false
     end
   end
 
@@ -466,35 +500,19 @@ module Hongbai
     #Deal with flags
     #########################
     def set_carry(result)
-      if result > 0xff
-        @p.set_carry_flag
-      else
-        @p.clear_carry_flag
-      end
+      @p.carry = result > 0xff
     end
 
     def set_zero(result)
-      if result == 0
-        @p.set_zero_flag
-      else
-        @p.clear_zero_flag
-      end
+      @p.zero = result.zero?
     end
 
     def set_negative(result)
-      if result & 0x80 == 0x80
-        @p.set_negative_flag
-      else
-        @p.clear_negative_flag
-      end
+      @p.negative = result & 0x80 == 0x80
     end
 
     def set_overflow(bit)
-      if bit == 1
-        @p.set_overflow_flag
-      else
-        @p.clear_overflow_flag
-      end
+      @p.overflow = bit == 1
     end
 
     #########################
@@ -513,12 +531,8 @@ module Hongbai
                  oper1 + oper2
                end
 
-      if (oper1 & 0x80 == oper2 & 0x80) &&
-         (oper1 & 0x80 != result & 0x80)
-        @p.set_overflow_flag
-      else
-        @p.clear_overflow_flag
-      end
+      @p.overflow = (oper1 & 0x80 == oper2 & 0x80) &&
+                    (oper1 & 0x80 != result & 0x80)
 
       set_carry(result)
       result &= 0xff
@@ -691,11 +705,7 @@ module Hongbai
 
       set_zero(result)
       set_negative(result)
-      if result >= 0
-        @p.set_carry_flag
-      else
-        @p.clear_carry_flag
-      end
+      @p.carry = result >= 0
 
       @pc.step bytes
       @counter += cycles
@@ -709,11 +719,7 @@ module Hongbai
 
       set_zero(result)
       set_negative(result)
-      if result >= 0
-        @p.set_carry_flag
-      else
-        @p.clear_carry_flag
-      end
+      @p.carry = result >= 0
 
       @pc.step bytes
       @counter += cycles
@@ -727,11 +733,7 @@ module Hongbai
 
       set_zero(result)
       set_negative(result)
-      if result >= 0
-        @p.set_carry_flag
-      else
-        @p.clear_carry_flag
-      end
+      @p.carry = result >= 0
 
       @pc.step bytes
       @counter += cycles
@@ -886,20 +888,12 @@ module Hongbai
     def lsr(addressing_mode, bytes, cycles)
       if addressing_mode == :accumulator
         result = @a.value >> 1
-        if @a.value & 1 == 1
-          @p.set_carry_flag
-        else
-          @p.clear_carry_flag
-        end
+        @p.carry = @a.value & 1 == 1
         @a.load result
       else
         addr = self.addressing(addressing_mode)
         oper = @m.fetch(addr)
-        if oper & 1 == 1
-          @p.set_carry_flag
-        else
-          @p.clear_carry_flag
-        end
+        @p.carry = oper & 1 == 1
         result = oper >> 1
         @m.load(addr, result)
       end
@@ -995,21 +989,13 @@ module Hongbai
     def ror(addressing_mode, bytes, cycles)
       if addressing_mode == :accumulator
         result = (@p.value & 1) << 7 | @a.value >> 1
-        if @a.value & 1 == 1
-          @p.set_carry_flag
-        else
-          @p.clear_carry_flag
-        end
+        @p.carry = @a.value & 1 == 1
         @a.load(result)
       else
         addr = self.addressing(addressing_mode)
         data = @m.fetch(addr)
         result = (@p.value & 1) << 7 | data >> 1
-        if data & 1 == 1
-          @p.set_carry_flag
-        else
-          @p.clear_carry_flag
-        end
+        @p.carry = data & 1 == 1
         @m.load(addr, result)
       end
 
@@ -1052,12 +1038,8 @@ module Hongbai
       set_zero(result & 0xff)
       set_negative(result & 0xff)
 
-      if (oper1 & 0x80 != oper2 & 0x80) &&
-         (oper1 & 0x80 != result & 0x80)
-        @p.set_overflow_flag
-      else
-        @p.clear_overflow_flag
-      end
+      @p.overflow = (oper1 & 0x80 != oper2 & 0x80) &&
+                    (oper1 & 0x80 != result & 0x80)
 
       @a.load(result & 0xff)
       @pc.step bytes
@@ -1175,8 +1157,6 @@ module Hongbai
       @counter += cycles
     end
 
-    # From here, define a binary search version of `decode`
-    #
     def self.unknown_op
       "raise \"Unkown op code \#{op}\""
     end
@@ -1186,34 +1166,6 @@ module Hongbai
     def self.send_args(args)
       method, addr_mode, bytes, cy = *args
       "#{method}(:#{addr_mode}, #{bytes}, #{cy})"
-    end
-
-    def self.binary_search_opcode(top, bottom)
-      if top <= bottom
-        raise "Illegal arguments, top should be greater than bottom, but top = #{top} bottom = #{bottom}"
-      end
-
-      if top - bottom == 1 # The base case
-        top_branch = decode(top)
-        bottom_branch = decode(bottom)
-        if top_branch.nil? && bottom_branch.nil?
-          # Both opcode are unknown
-          unknown_op
-        elsif top_branch.nil?
-          "if op == #{bottom} then #{send_args(bottom_branch)} else #{unknown_op} end"
-        elsif bottom_branch.nil?
-          "if op == #{top} then #{send_args(top_branch)} else #{unknown_op} end"
-        else
-          "if op == #{top} then #{send_args(top_branch)} else #{send_args(bottom_branch)} end"
-        end
-      else # Recursive defination
-        mid = (top + bottom) / 2
-        "if op > #{mid}\n"\
-          "#{binary_search_opcode(top, mid + 1)}\n"\
-        "else\n"\
-          "#{binary_search_opcode(mid, bottom)}\n"\
-        "end"
-      end
     end
 
     def self.static_method_call
@@ -1226,7 +1178,6 @@ module Hongbai
       defination += "else #{unknown_op} end"
     end
 
-    #defination = binary_search_opcode(255, 0)
     defination = static_method_call
 
     class_eval("def run(op); #{defination} end")
