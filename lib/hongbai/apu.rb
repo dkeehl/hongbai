@@ -44,8 +44,9 @@ module Hongbai
       @pulse_2 = Pulse.new(true)
       @triangle = Triangle.new
       @noise = Noise.new
+      @dmc = Dmc.new
 
-      @mixer = Mixer.new(@pulse_1, @pulse_2, @triangle, @noise)
+      @mixer = Mixer.new(@pulse_1, @pulse_2, @triangle, @noise, @dmc)
       @buffer = []
       @output = []
       @cycle = 0
@@ -54,16 +55,19 @@ module Hongbai
       @sequencer = MODE_0
       @step = 0
       @cycles_until_next_step = @sequencer[@step].cycles
+      @frame_interrupt = false
+      @interrupt_inhibit = false
       # Because writings to 4017 have different effects upon different cpu cycles,
-      # need these two buffers
+      # need this buffer
       @val_4017 = nil
-      @wrote_on_odd_cycle = nil
 
       # For resampling
       @filter = filter
       @sampling_counter = 0.0
       @decimation_counter = 0
     end
+
+    attr_reader :pulse_1, :pulse_2, :triangle, :noise, :dmc, :frame_interrupt
 
     def run
       # one step per cpu cycle
@@ -78,72 +82,105 @@ module Hongbai
       @cycle += 1
     end
 
-    def clock_channels
-      # The triangle channel's timer is clocked every cpu cycle;
-      # other channels' timers are clocked every second cpu cycle.
-      @triangle.clock
-      if @cycle.odd?
-        @pulse_1.clock
-        @pulse_2.clock
-        @noise.clock
-      end
+    def read_4015
+      p1 = @pulse_1 .length_counter.count > 0 ? 0b0000_0001 : 0
+      p2 = @pulse_2 .length_counter.count > 0 ? 0b0000_0010 : 0
+      t  = @triangle.length_counter.count > 0 ? 0b0000_0100 : 0
+      n  = @noise   .length_counter.count > 0 ? 0b0000_1000 : 0
+      d  = @dmc.bits_remaining > 0 ? 0b0001_0000 : 0
+      f  = @frame_interrupt        ? 0b0100_0000 : 0
+      i  = @dmc.interrupt          ? 0b1000_0000 : 0
+
+      # FIXME: if an frame interrupt flag was set at the same moment of the read,
+      # it will read back as 1, but it will not be cleard
+      @frame_interrupt = false
+
+      p1 + p2 + t + n + d + f + i
     end
 
-    def clock_output
-      @sampling_counter += 1.0
-      return if @sampling_counter < SAMPLE_RATIO
-      @sampling_counter -= SAMPLE_RATIO
-      raw = @mixer.sample
-      # Resample
-      sample = @filter.apply(raw)
-      @decimation_counter += 1
-      if @decimation_counter >= FILTER_MUL
-        @decimation_counter = 0
-        @buffer << sample
-      end
+    def write_4015(val)
+      @pulse_1 .enable = val[0] == 1
+      @pulse_2 .enable = val[1] == 1
+      @triangle.enable = val[2] == 1
+      @noise   .enable = val[3] == 1
+      @dmc     .enable = val[4] == 1
+
+      @dmc.clear_interrupt
     end
 
-    def clock_frame_counter
-      @cycles_until_next_step -= 1
-      if @cycles_until_next_step.zero?
-        this_step = @sequence[@step]
-        if this_step.clk_sweep_units
-          @pulse_1.clock_sweep_unit
-          @pulse_2.clock_sweep_unit
-        end
-
-        if this_step.clk_envelopes
-          @pulse_1.clock_envelope
-          @pulse_2.clock_envelope
-          @noise.clock_envelope
-        end
-
-        if this_step.clk_length_counters
-          @pulse_1.clock_length_counter
-          @pulse_2.clock_length_counter
-          @triangle.clock_length_counter
-          @noise.clock_length_counter
-        end
-
-        if this_step.clk_linear_counter
-          @triangle.clock_linear_counter
-        end
-
-        if this_step.clk_irq
-        end
-
-        @step = this_step.next_step
-        @cycles_until_next_step = @sequence[@step].cycles
-      end
-
-      if @val_4017
-        raise "No cpu cycle info after writing to $4017" if @wrote_on_odd_cycle.nil?
-        @sequence = SEQUENCERS[@val_4017[7]]
-        @step = @wrote_on_odd_cycle ? 0 : 1
-        @cycles_until_next_step = @sequence[@step].cycles
-        @val_4017 = @wrote_on_odd_cycle = nil
-      end
+    def write_4017(val)
+      @val_4017 = val
+      @interrupt_inhibit = val[6] == 1
+      @frame_interrupt = false if @interrupt_inhibit 
     end
+
+    def irq?
+      @frame_interrupt || @dmc.interrupt
+    end
+
+    private
+      def clock_channels
+        # The triangle channel's timer is clocked every cpu cycle.
+        # Other channels' timers are clocked every second cpu cycle.
+        @triangle.clock
+        if @cycle.odd?
+          @pulse_1.clock
+          @pulse_2.clock
+          @noise  .clock
+          @dmc    .clock
+        end
+      end
+
+      def clock_output
+        @sampling_counter += 1.0
+        return if @sampling_counter < SAMPLE_RATIO
+        @sampling_counter -= SAMPLE_RATIO
+        raw = @mixer.sample
+        # Resample
+        sample = @filter.apply(raw)
+        @decimation_counter += 1
+        if @decimation_counter >= FILTER_MUL
+          @decimation_counter = 0
+          @buffer << sample
+        end
+      end
+
+      def clock_frame_counter
+        @cycles_until_next_step -= 1
+        if @cycles_until_next_step.zero?
+          this_step = @sequence[@step]
+          if this_step.clk_sweep_units
+            @pulse_1.clock_sweep_unit
+            @pulse_2.clock_sweep_unit
+          end
+
+          if this_step.clk_envelopes
+            @pulse_1.clock_envelope
+            @pulse_2.clock_envelope
+            @noise.clock_envelope
+          end
+
+          if this_step.clk_length_counters
+            @pulse_1.clock_length_counter
+            @pulse_2.clock_length_counter
+            @triangle.clock_length_counter
+            @noise.clock_length_counter
+          end
+
+          @triangle.clock_linear_counter if this_step.clk_linear_counter
+          @frame_interrupt = true if this_step.clk_irq && !@interrupt_inhibit
+
+          @step = this_step.next_step
+          @cycles_until_next_step = @sequence[@step].cycles
+        end
+
+        if @val_4017
+          @sequence = SEQUENCERS[@val_4017[7]]
+          @step = @cycle.even? ? 0 : 1
+          @cycles_until_next_step = @sequence[@step].cycles
+          @val_4017 = nil
+        end
+      end
   end
 
   class Pulse
@@ -154,6 +191,7 @@ module Hongbai
     end
 
     def initialize(pulse_2 = false)
+      @enabled = false
       # Sweep unit
       @sweep_reload = false
       @sweep_enabled = false
@@ -172,6 +210,11 @@ module Hongbai
 
       @envelope = Envelope.new
       @length_counter = LengthCounter.new
+    end
+
+    def enable=(b)
+      @enabled = b
+      @length_counter.count = 0 if !@enabled
     end
 
     def write_0(val)
@@ -195,8 +238,8 @@ module Hongbai
 
     def write_3(val)
       @wave_length = (@wave_length & 0xff) | ((val & 0x7) << 8)
+      @length_counter.write val
       @envelope.restart
-      @length_counter.write(val)
       @step = 0
     end
 
@@ -207,7 +250,7 @@ module Hongbai
     end
 
     def audible?
-      valid_period? && @envelope.output.nonzero? && @length_counter.count.nonzero?
+      @enabled && valid_period? && @envelope.output.nonzero? && @length_counter.count.nonzero?
     end
 
     def clock
@@ -313,7 +356,7 @@ module Hongbai
       @halt = false
     end
 
-    attr_reader :count
+    attr_accessor :count
     attr_writer :halt
 
     def write(val)
@@ -332,6 +375,8 @@ module Hongbai
     ]
 
     def initialize
+      @enabled = false
+
       @period = 0 # In fact this is the period minus 1
       @timer = 0
       @step = 0
@@ -343,6 +388,11 @@ module Hongbai
       @control = false
 
       @length_counter = LengthCounter.new
+    end
+
+    def enable=(b)
+      @enabled = b
+      @length_counter.count = 0 if !@enabled
     end
 
     def write_0(val)
@@ -385,7 +435,7 @@ module Hongbai
     end
 
     def silenced?
-      @linear_counter.zero? || @length_counter.count.zero? || @period < 2
+      !@enabled || @linear_counter.zero? || @length_counter.count.zero? || @period < 2
     end
 
     def sample
@@ -397,6 +447,8 @@ module Hongbai
     PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
     
     def initialize
+      @enabled = false
+
       @timer = 0
       @period = PERIODS[0]
       # Feedback shift register
@@ -405,6 +457,11 @@ module Hongbai
       @mode = false
       @envelope = Envelope.new
       @length_counter = LengthCounter.new
+    end
+
+    def enable=(b)
+      @enabled = b
+      @length_counter.count = 0 if !@enabled
     end
 
     def write_0(val)
@@ -442,7 +499,7 @@ module Hongbai
     end
 
     def silenced?
-      @shift[0] == 1 || @length_counter.count.zero?
+      !@enabled || @shift[0] == 1 || @length_counter.count.zero?
     end
 
     def sample
@@ -451,17 +508,136 @@ module Hongbai
   end
 
   class Dmc
+    RATE_TABLE = [
+      428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
+    ].map {|n| n / 2 } # devide cpu cycles by 2 to get apu cycle counts
+
+    def initialize
+      @enabled = false
+
+      @rate = RATE_TABLE[0]
+      @timer = @rate
+
+      @output = 0
+
+      # memory reader
+      @enable_interrupt = false
+      @interrupt = false
+      @loop = false
+      @sample_address = 0xc000
+      @current_address = @sample_address
+      @sample_length = 0
+      @bytes_remaining = @sample_length
+
+      @sample_buffer = nil
+
+      # output unit
+      @shift = 0
+      @bits_remaining = 8
+      @silence = true
+    end
+
+    attr_reader :interrupt, :bits_remaining
+
+    def enable=(b)
+      @enabled = b
+      if !@enabled
+        @bytes_remaining = 0
+      elsif @bytes_remaining.zero?
+        @current_address = @sample_address
+        @bytes_remaining = @sample_length
+      end
+    end
+
+    def write_0(val)
+      @enable_interrupt = val[7] == 1
+      @interrupt = false if !@enable_interrupt
+      @loop = val[6] == 1
+      @rate = RATE_TABLE[val & 0xf]
+    end
+
+    def write_1(val)
+      @output = val & 0x7f
+    end
+
+    def write_2(val)
+      @sample_address = 0xc000 + val * 64
+    end
+
+    def write_3(val)
+      @sample_length = val * 16 + 1
+    end
+
+    def clear_interrupt
+      @interrupt = false
+    end
+
+    def clock
+      if @timer.zero?
+        @timer = @rate
+        update_output unless @silence
+        @shift >> 1
+        @bits_remaining -= 1
+        new_cycle if @bits_remaining.zero?
+      else
+        @timer -= 1
+      end
+    end
+
+    def sample
+      @output
+    end
+
+    def should_activate_dma?
+      @sample_buffer.nil? && @bits_remaining.nonzero?
+    end
+
+    def dma_write(val)
+      @sample_buffer = val
+      @current_address += 1
+      @current_address -= 0x8000 if @current_address > 0xffff
+      @bytes_remaining -= 1
+      if @bytes_remaining.zero?
+        if @loop
+          @current_address = @sample_address
+          @bytes_remaining = @sample_length
+        else
+          @interrupt = true if @enable_interrupt
+        end
+      end
+    end
+
+    private
+      def update_output
+        if @shift[0].zero?
+          @output -= 2 unless @output < 2
+        else
+          @output += 2 unless @output > 125
+        end
+      end
+
+      def new_cycle
+        @bits_remaining = 8
+        if @sample_buffer.nil?
+          @silence = true
+        else
+          @silence = false
+          @shift = @sample_buffer
+          @sample_buffer = nil
+        end
+      end
   end
 
   class Mixer
     PULSE_TABLE = (0..30).map {|n| n.zero? ? 0 : 95.52 / (8128.0 / n + 100) }
     TND_TABLE = (0..202).map {|n| n.zero? ? 0 : 163.67 / (24329.0 / n + 100) }
 
-    def initialize(pulse_1, pulse_2, triangle, noise)
+    def initialize(pulse_1, pulse_2, triangle, noise, dmc)
       @pulse_1 = pulse_1
       @pulse_2 = pulse_2
       @triangle = triangle
       @noise = noise
+      @dmc = dmc
     end
 
     def sample
@@ -469,7 +645,7 @@ module Hongbai
       pulse_2 = @pulse_2.sample
       triangle = @triangle.sample
       noise = @noise.sample
-      dmc = 0
+      dmc = @dmc.sample
 
       pulse_out = PULSE_TABLE[pulse_1 + pulse_2]
       tnd_out = TND_TABLE[3 * triangle + 2 * noise + dmc]
