@@ -219,37 +219,37 @@ module Hongbai
     #############################
     #States accessors
     #############################
-    def accumulator
-      @a.value
-    end
+    #def accumulator
+    #  @a.value
+    #end
 
-    def x_register
-      @x.value
-    end
+    #def x_register
+    #  @x.value
+    #end
 
-    def y_register
-      @y.value
-    end
+    #def y_register
+    #  @y.value
+    #end
 
-    def pc
-      @pc.value
-    end
+    #def pc
+    #  @pc.value
+    #end
 
-    def p_register
-      @p.value
-    end
+    #def p_register
+    #  @p.value
+    #end
 
-    def stack_pointer
-      @sp.value
-    end
+    #def stack_pointer
+    #  @sp.value
+    #end
 
-    def mem
-      @m
-    end
+    #def mem
+    #  @m
+    #end
 
-    def cycle
-      @counter
-    end
+    #def cycle
+    #  @counter
+    #end
 
     #########################
     #OPCODES
@@ -580,8 +580,8 @@ module Hongbai
     end
 
     #4.BCC
-    def select_branch(addressing_mode, bytes, cycles)
-      if yield
+    def select_branch(bytes, cycles, test)
+      if test
         oper = @m.fetch(@pc.value + 1)
         orig_pc = @pc.value
         @pc.relative_move(oper)
@@ -597,17 +597,17 @@ module Hongbai
     end
 
     def bcc(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { !@p.carry_flag? }
+      select_branch(bytes, cycles, !@p.carry_flag?)
     end
 
     #5.BCS
     def bcs(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { @p.carry_flag? }
+      select_branch(bytes, cycles, @p.carry_flag?)
     end
 
     #6.BEQ
     def beq(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { @p.zero_flag? }
+      select_branch(bytes, cycles, @p.zero_flag?)
     end
 
     #7.BIT
@@ -628,17 +628,17 @@ module Hongbai
 
     #8.BMI
     def bmi(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { @p.negative_flag? }
+      select_branch(bytes, cycles, @p.negative_flag?)
     end
 
     #9.BNE
     def bne(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { !@p.zero_flag? }
+      select_branch(bytes, cycles, !@p.zero_flag?)
     end
 
     #10.BPL
     def bpl(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { !@p.negative_flag? }
+      select_branch(bytes, cycles, !@p.negative_flag?)
     end
 
     #11.BRK
@@ -661,12 +661,12 @@ module Hongbai
 
     #12.BVC
     def bvc(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { !@p.overflow_flag? }
+      select_branch(bytes, cycles, !@p.overflow_flag?)
     end
 
     #13.BVS
     def bvs(addressing_mode, bytes, cycles)
-      select_branch(addressing_mode, bytes, cycles) { @p.overflow_flag? }
+      select_branch(bytes, cycles, @p.overflow_flag?)
     end
 
     #14.CLC
