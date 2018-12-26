@@ -247,9 +247,9 @@ module Hongbai
     #  @m
     #end
 
-    #def cycle
-    #  @counter
-    #end
+    def cycle
+      @counter
+    end
 
     #########################
     #OPCODES
@@ -453,36 +453,42 @@ module Hongbai
         addr = @m.read(@pc.value + 1)
       when :zero_page_x
         addr = @m.read(@pc.value + 1) + @x.value & 0xff
+        @m.dummy_read(@pc.value + 2)
       when :zero_page_y
         addr = @m.read(@pc.value + 1) + @y.value & 0xff
+        @m.dummy_read(@pc.value + 2)
       when :absolute
-        addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
+        addr = read_u16(@pc.value + 1)
       when :absolute_x
-        addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
-        if addr & 0xff00 != (addr + @x.value) & 0xff00
+        base_addr = read_u16(@pc.value + 1)
+        addr = base_addr + @x.value
+        if base_addr & 0xff00 != addr & 0xff00
           @counter += 1
+          @m.dummy_read(addr - 0x100)
         end
-        addr += @x.value
       when :absolute_y
-        addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
-        if addr & 0xff00 != (addr + @y.value) & 0xff00
+        base_addr = read_u16(@pc.value + 1)
+        addr = base_addr + @y.value
+        if base_addr & 0xff00 != addr & 0xff00
           @counter += 1
+          @m.dummy_read(addr - 0x100)
         end
-        addr += @y.value
       when :indirect
-        addr = @m.read(@pc.value + 1) | @m.read(@pc.value + 2) << 8
-        addr = @m.read(addr) | @m.read(addr + 1) << 8
+        addr_addr = read_u16(@pc.value + 1)
+        addr = read_u16(addr_addr)
       when :indirect_x
-        addr = @m.read(@pc.value + 1)
-        addr = (addr + @x.value) & 0xff
-        addr = @m.read(addr) | @m.read(addr + 1) << 8
+        base_addr = @m.read(@pc.value + 1)
+        @m.dummy_read(@pc.value + 2)
+        addr_addr = (base_addr + @x.value) & 0xff
+        addr = read_u16(addr_addr)
       when :indirect_y
-        addr = @m.read(@pc.value + 1)
-        addr = @m.read(addr) | @m.read(addr + 1) << 8
-        if addr & 0xff00 != (addr + @y.value) & 0xff00
+        addr_addr = @m.read(@pc.value + 1)
+        base_addr = read_u16(addr_addr)
+        addr = base_addr + @y.value
+        if base_addr & 0xff00 != addr & 0xff00
           @counter += 1
+          @m.dummy_read(addr - 0x100)
         end
-        addr += @y.value
       when :accumulator
         addr = nil
       when :relative

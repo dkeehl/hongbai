@@ -8,10 +8,12 @@ module Hongbai
 
       @dma_triggered = nil
 
+      @cycle = 0
       @trace = false
     end
 
     attr_accessor :dma_triggered, :trace
+    attr_reader :cycle
 
     # Memory map
     # $0000 - $07ff 2KB internal RAM
@@ -24,6 +26,7 @@ module Hongbai
     # $4018 - $401f normally disabled APU and IO functionality
     # $4020 - $ffff cartridge space
     def read(addr)
+      on_cpu_cycle
       if addr < 0x2000
         @ram[addr & 0x7ff]
       elsif addr < 0x4000
@@ -47,6 +50,7 @@ module Hongbai
     end
 
     def load(addr, val)
+      on_cpu_cycle
       if addr < 0x2000
         @ram[addr & 0x7ff] = val
       elsif addr < 0x4000
@@ -65,6 +69,11 @@ module Hongbai
       end
     end
 
-    def fetch(addr); read(addr) end
+    alias_method :fetch, :read
+    alias_method :dummy_read, :read
+
+    def on_cpu_cycle
+      @cycle += 1
+    end
   end
 end
