@@ -17,13 +17,24 @@ module Hongbai
     class Mem
       def initialize
         @array = Array.new(0x10000, 0)
+        @cycle = 0
       end
 
-      def fetch(n); @arrsy[n] end
+      def read(n)
+        @cycle += 1
+        @array[n]
+      end
 
-      def read(n); @array[n] end
+      def load(n, x)
+        @cycle += 1
+        @array[n] = x
+      end
 
-      def load(n, x); @array[n] = x end
+      def []=(n, x); @array[n] = x end
+
+      alias_method :fetch, :read
+      alias_method :dummy_read, :read
+      attr_reader :cycle
     end
 
     class Input
