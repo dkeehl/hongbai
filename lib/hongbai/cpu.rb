@@ -254,193 +254,191 @@ module Hongbai
     #########################
     #OPCODES
     #########################
-    def self.decode(opcode)
-      case opcode
-      when 0x69 then [:adc, :immediate,   2, 2]
-      when 0x65 then [:adc, :zero_page,   2, 3]
-      when 0x75 then [:adc, :zero_page_x, 2, 4]
-      when 0x6d then [:adc, :absolute,    3, 4]
-      when 0x7d then [:adc, :absolute_x,  3, 4]
-      when 0x79 then [:adc, :absolute_y,  3, 4]
-      when 0x61 then [:adc, :indirect_x,  2, 6]
-      when 0x71 then [:adc, :indirect_y,  2, 5]
+    OP_TABLE = {
+      # code => [instruction, addressing, bytes, cycles]
+      0x69 => [:adc, :immediate,   2, 2],
+      0x65 => [:adc, :zero_page,   2, 3],
+      0x75 => [:adc, :zero_page_x, 2, 4],
+      0x6d => [:adc, :absolute,    3, 4],
+      0x7d => [:adc, :absolute_x,  3, 4],
+      0x79 => [:adc, :absolute_y,  3, 4],
+      0x61 => [:adc, :indirect_x,  2, 6],
+      0x71 => [:adc, :indirect_y,  2, 5],
 
-      when 0x29 then [:and_, :immediate,   2, 2]
-      when 0x25 then [:and_, :zero_page,   2, 3]
-      when 0x35 then [:and_, :zero_page_x, 2, 4]
-      when 0x2d then [:and_, :absolute,    3, 4]
-      when 0x3d then [:and_, :absolute_x,  3, 4]
-      when 0x39 then [:and_, :absolute_y,  3, 4]
-      when 0x21 then [:and_, :indirect_x,  2, 6]
-      when 0x31 then [:and_, :indirect_y,  2, 5]
+      0x29 => [:und, :immediate,   2, 2],
+      0x25 => [:und, :zero_page,   2, 3],
+      0x35 => [:und, :zero_page_x, 2, 4],
+      0x2d => [:und, :absolute,    3, 4],
+      0x3d => [:und, :absolute_x,  3, 4],
+      0x39 => [:und, :absolute_y,  3, 4],
+      0x21 => [:und, :indirect_x,  2, 6],
+      0x31 => [:und, :indirect_y,  2, 5],
 
-      when 0x0a then [:asl, :accumulator, 1, 2]
-      when 0x06 then [:asl, :zero_page,   2, 5]
-      when 0x16 then [:asl, :zero_page_x, 2, 6]
-      when 0x0e then [:asl, :absolute,    3, 6]
-      when 0x1e then [:asl, :absolute_x,  3, 7]
+      0x0a => [:asl, :accumulator, 1, 2],
+      0x06 => [:asl, :zero_page,   2, 5],
+      0x16 => [:asl, :zero_page_x, 2, 6],
+      0x0e => [:asl, :absolute,    3, 6],
+      0x1e => [:asl, :absolute_x,  3, 7],
 
-      when 0x90 then [:bcc, :relative,    2, 2]
-      when 0xb0 then [:bcs, :relative,    2, 2]
-      when 0xf0 then [:beq, :relative,    2, 2]
+      0x90 => [:bcc, :relative,    2, 2],
+      0xb0 => [:bcs, :relative,    2, 2],
+      0xf0 => [:beq, :relative,    2, 2],
 
-      when 0x24 then [:bit, :zero_page,   2, 3]
-      when 0x2c then [:bit, :absolute,    3, 4]
+      0x24 => [:bit, :zero_page,   2, 3],
+      0x2c => [:bit, :absolute,    3, 4],
 
-      when 0x30 then [:bmi, :relative,    2, 2]
-      when 0xd0 then [:bne, :relative,    2, 2]
-      when 0x10 then [:bpl, :relative,    2, 2]
-      when 0x00 then [:brk, :implied,     1, 7]
-      when 0x50 then [:bvc, :relative,    2, 2]
-      when 0x70 then [:bvs, :relative,    2, 2]
-      when 0x18 then [:clc, :implied,     1, 2]
-      when 0xd8 then [:cld, :implied,     1, 2]
-      when 0x58 then [:cli, :implied,     1, 2]
-      when 0xb8 then [:clv, :implied,     1, 2]
+      0x30 => [:bmi, :relative,    2, 2],
+      0xd0 => [:bne, :relative,    2, 2],
+      0x10 => [:bpl, :relative,    2, 2],
+      0x00 => [:brk, :implied,     1, 7],
+      0x50 => [:bvc, :relative,    2, 2],
+      0x70 => [:bvs, :relative,    2, 2],
+      0x18 => [:clc, :implied,     1, 2],
+      0xd8 => [:cld, :implied,     1, 2],
+      0x58 => [:cli, :implied,     1, 2],
+      0xb8 => [:clv, :implied,     1, 2],
 
-      when 0xc9 then [:cmp, :immediate,   2, 2]
-      when 0xc5 then [:cmp, :zero_page,   2, 3]
-      when 0xd5 then [:cmp, :zero_page_x, 2, 4]
-      when 0xcd then [:cmp, :absolute,    3, 4]
-      when 0xdd then [:cmp, :absolute_x,  3, 4]
-      when 0xd9 then [:cmp, :absolute_y,  3, 4]
-      when 0xc1 then [:cmp, :indirect_x,  2, 6]
-      when 0xd1 then [:cmp, :indirect_y,  2, 5]
+      0xc9 => [:cmp, :immediate,   2, 2],
+      0xc5 => [:cmp, :zero_page,   2, 3],
+      0xd5 => [:cmp, :zero_page_x, 2, 4],
+      0xcd => [:cmp, :absolute,    3, 4],
+      0xdd => [:cmp, :absolute_x,  3, 4],
+      0xd9 => [:cmp, :absolute_y,  3, 4],
+      0xc1 => [:cmp, :indirect_x,  2, 6],
+      0xd1 => [:cmp, :indirect_y,  2, 5],
 
-      when 0xe0 then [:cpx, :immediate,   2, 2]
-      when 0xe4 then [:cpx, :zero_page,   2, 3]
-      when 0xec then [:cpx, :absolute,    3, 4]
+      0xe0 => [:cpx, :immediate,   2, 2],
+      0xe4 => [:cpx, :zero_page,   2, 3],
+      0xec => [:cpx, :absolute,    3, 4],
 
-      when 0xc0 then [:cpy, :immediate,   2, 2]
-      when 0xc4 then [:cpy, :zero_page,   2, 3]
-      when 0xcc then [:cpy, :absolute,    3, 4]
+      0xc0 => [:cpy, :immediate,   2, 2],
+      0xc4 => [:cpy, :zero_page,   2, 3],
+      0xcc => [:cpy, :absolute,    3, 4],
 
-      when 0xc6 then [:dec, :zero_page,   2, 5]
-      when 0xd6 then [:dec, :zero_page_x, 2, 6]
-      when 0xce then [:dec, :absolute,    3, 6]
-      when 0xde then [:dec, :absolute_x,  3, 7]
+      0xc6 => [:dec, :zero_page,   2, 5],
+      0xd6 => [:dec, :zero_page_x, 2, 6],
+      0xce => [:dec, :absolute,    3, 6],
+      0xde => [:dec, :absolute_x,  3, 7],
 
-      when 0xca then [:dex, :implied,     1, 2]
-      when 0x88 then [:dey, :implied,     1, 2]
+      0xca => [:dex, :implied,     1, 2],
+      0x88 => [:dey, :implied,     1, 2],
 
-      when 0x49 then [:eor, :immediate,   2, 2]
-      when 0x45 then [:eor, :zero_page,   2, 3]
-      when 0x55 then [:eor, :zero_page_x, 2, 4]
-      when 0x4d then [:eor, :absolute,    3, 4]
-      when 0x5d then [:eor, :absolute_x,  3, 4]
-      when 0x59 then [:eor, :absolute_y,  3, 4]
-      when 0x41 then [:eor, :indirect_x,  2, 6]
-      when 0x51 then [:eor, :indirect_y,  2, 5]
+      0x49 => [:eor, :immediate,   2, 2],
+      0x45 => [:eor, :zero_page,   2, 3],
+      0x55 => [:eor, :zero_page_x, 2, 4],
+      0x4d => [:eor, :absolute,    3, 4],
+      0x5d => [:eor, :absolute_x,  3, 4],
+      0x59 => [:eor, :absolute_y,  3, 4],
+      0x41 => [:eor, :indirect_x,  2, 6],
+      0x51 => [:eor, :indirect_y,  2, 5],
 
-      when 0xe6 then [:inc, :zero_page,   2, 5]
-      when 0xf6 then [:inc, :zero_page_x, 2, 6]
-      when 0xee then [:inc, :absolute,    3, 6]
-      when 0xfe then [:inc, :absolute_x,  3, 7]
+      0xe6 => [:inc, :zero_page,   2, 5],
+      0xf6 => [:inc, :zero_page_x, 2, 6],
+      0xee => [:inc, :absolute,    3, 6],
+      0xfe => [:inc, :absolute_x,  3, 7],
 
-      when 0xe8 then [:inx, :implied,     1, 2]
-      when 0xc8 then [:iny, :implied,     1, 2]
+      0xe8 => [:inx, :implied,     1, 2],
+      0xc8 => [:iny, :implied,     1, 2],
 
-      when 0x4c then [:jmp, :absolute,    3, 3]
-      when 0x6c then [:jmp, :indirect,    3, 5]
+      0x4c => [:jmp, :absolute,    3, 3],
+      0x6c => [:jmp, :indirect,    3, 5],
 
-      when 0x20 then [:jsr, :absolute,    3, 6]
+      0x20 => [:jsr, :absolute,    3, 6],
 
-      when 0xa9 then [:lda, :immediate,   2, 2]
-      when 0xa5 then [:lda, :zero_page,   2, 3]
-      when 0xb5 then [:lda, :zero_page_x, 2, 4]
-      when 0xad then [:lda, :absolute,    3, 4]
-      when 0xbd then [:lda, :absolute_x,  3, 4]
-      when 0xb9 then [:lda, :absolute_y,  3, 4]
-      when 0xa1 then [:lda, :indirect_x,  2, 6]
-      when 0xb1 then [:lda, :indirect_y,  2, 5]
+      0xa9 => [:lda, :immediate,   2, 2],
+      0xa5 => [:lda, :zero_page,   2, 3],
+      0xb5 => [:lda, :zero_page_x, 2, 4],
+      0xad => [:lda, :absolute,    3, 4],
+      0xbd => [:lda, :absolute_x,  3, 4],
+      0xb9 => [:lda, :absolute_y,  3, 4],
+      0xa1 => [:lda, :indirect_x,  2, 6],
+      0xb1 => [:lda, :indirect_y,  2, 5],
 
-      when 0xa2 then [:ldx, :immediate,   2, 2]
-      when 0xa6 then [:ldx, :zero_page,   2, 3]
-      when 0xb6 then [:ldx, :zero_page_y, 2, 4]
-      when 0xae then [:ldx, :absolute,    3, 4]
-      when 0xbe then [:ldx, :absolute_y,  3, 4]
+      0xa2 => [:ldx, :immediate,   2, 2],
+      0xa6 => [:ldx, :zero_page,   2, 3],
+      0xb6 => [:ldx, :zero_page_y, 2, 4],
+      0xae => [:ldx, :absolute,    3, 4],
+      0xbe => [:ldx, :absolute_y,  3, 4],
 
-      when 0xa0 then [:ldy, :immediate,   2, 2]
-      when 0xa4 then [:ldy, :zero_page,   2, 3]
-      when 0xb4 then [:ldy, :zero_page_x, 2, 4]
-      when 0xac then [:ldy, :absolute,    3, 4]
-      when 0xbc then [:ldy, :absolute_x,  3, 4]
+      0xa0 => [:ldy, :immediate,   2, 2],
+      0xa4 => [:ldy, :zero_page,   2, 3],
+      0xb4 => [:ldy, :zero_page_x, 2, 4],
+      0xac => [:ldy, :absolute,    3, 4],
+      0xbc => [:ldy, :absolute_x,  3, 4],
 
-      when 0x4a then [:lsr, :accumulator, 1, 2]
-      when 0x46 then [:lsr, :zero_page,   2, 5]
-      when 0x56 then [:lsr, :zero_page_x, 2, 4]
-      when 0x4e then [:lsr, :absolute,    3, 4]
-      when 0x5e then [:lsr, :absolute_x,  3, 7]
+      0x4a => [:lsr, :accumulator, 1, 2],
+      0x46 => [:lsr, :zero_page,   2, 5],
+      0x56 => [:lsr, :zero_page_x, 2, 4],
+      0x4e => [:lsr, :absolute,    3, 4],
+      0x5e => [:lsr, :absolute_x,  3, 7],
 
-      when 0xea then [:nop, :implied,     1, 2]
+      0xea => [:nop, :implied,     1, 2],
 
-      when 0x09 then [:ora, :immediate,   2, 2]
-      when 0x05 then [:ora, :zero_page,   2, 3]
-      when 0x15 then [:ora, :zero_page_x, 2, 4]
-      when 0x0d then [:ora, :absolute,    3, 4]
-      when 0x1d then [:ora, :absolute_x,  3, 4]
-      when 0x19 then [:ora, :absolute_y,  3, 4]
-      when 0x01 then [:ora, :indirect_x,  2, 6]
-      when 0x11 then [:ora, :indirect_y,  2, 5]
+      0x09 => [:ora, :immediate,   2, 2],
+      0x05 => [:ora, :zero_page,   2, 3],
+      0x15 => [:ora, :zero_page_x, 2, 4],
+      0x0d => [:ora, :absolute,    3, 4],
+      0x1d => [:ora, :absolute_x,  3, 4],
+      0x19 => [:ora, :absolute_y,  3, 4],
+      0x01 => [:ora, :indirect_x,  2, 6],
+      0x11 => [:ora, :indirect_y,  2, 5],
 
-      when 0x48 then [:pha, :implied,     1, 3]
-      when 0x08 then [:php, :implied,     1, 3]
-      when 0x68 then [:pla, :implied,     1, 4]
-      when 0x28 then [:plp, :implied,     1, 4]
+      0x48 => [:pha, :implied,     1, 3],
+      0x08 => [:php, :implied,     1, 3],
+      0x68 => [:pla, :implied,     1, 4],
+      0x28 => [:plp, :implied,     1, 4],
 
-      when 0x2a then [:rol, :accumulator, 1, 2]
-      when 0x26 then [:rol, :zero_page,   2, 5]
-      when 0x36 then [:rol, :zero_page_x, 2, 6]
-      when 0x2e then [:rol, :absolute,    3, 6]
-      when 0x3e then [:rol, :absolute_x,  3, 7]
+      0x2a => [:rol, :accumulator, 1, 2],
+      0x26 => [:rol, :zero_page,   2, 5],
+      0x36 => [:rol, :zero_page_x, 2, 6],
+      0x2e => [:rol, :absolute,    3, 6],
+      0x3e => [:rol, :absolute_x,  3, 7],
 
-      when 0x6a then [:ror, :accumulator, 1, 2]
-      when 0x66 then [:ror, :zero_page,   2, 5]
-      when 0x76 then [:ror, :zero_page_x, 2, 6]
-      when 0x6e then [:ror, :absolute,    3, 6]
-      when 0x7e then [:ror, :absolute_x,  3, 7]
+      0x6a => [:ror, :accumulator, 1, 2],
+      0x66 => [:ror, :zero_page,   2, 5],
+      0x76 => [:ror, :zero_page_x, 2, 6],
+      0x6e => [:ror, :absolute,    3, 6],
+      0x7e => [:ror, :absolute_x,  3, 7],
 
-      when 0x40 then [:rti, :implied,     1, 6]
-      when 0x60 then [:rts, :implied,     1, 6]
+      0x40 => [:rti, :implied,     1, 6],
+      0x60 => [:rts, :implied,     1, 6],
 
-      when 0xe9 then [:sbc, :immediate,   2, 2]
-      when 0xe5 then [:sbc, :zero_page,   2, 3]
-      when 0xf5 then [:sbc, :zero_page_x, 2, 4]
-      when 0xed then [:sbc, :absolute,    3, 4]
-      when 0xfd then [:sbc, :absolute_x,  3, 4]
-      when 0xf9 then [:sbc, :absolute_y,  3, 4]
-      when 0xe1 then [:sbc, :indirect_x,  2, 6]
-      when 0xf1 then [:sbc, :indirect_y,  2, 5]
+      0xe9 => [:sbc, :immediate,   2, 2],
+      0xe5 => [:sbc, :zero_page,   2, 3],
+      0xf5 => [:sbc, :zero_page_x, 2, 4],
+      0xed => [:sbc, :absolute,    3, 4],
+      0xfd => [:sbc, :absolute_x,  3, 4],
+      0xf9 => [:sbc, :absolute_y,  3, 4],
+      0xe1 => [:sbc, :indirect_x,  2, 6],
+      0xf1 => [:sbc, :indirect_y,  2, 5],
 
-      when 0x38 then [:sec, :implied,     1, 2]
-      when 0xf8 then [:sed, :implied,     1, 2]
-      when 0x78 then [:sei, :implied,     1, 2]
+      0x38 => [:sec, :implied,     1, 2],
+      0xf8 => [:sed, :implied,     1, 2],
+      0x78 => [:sei, :implied,     1, 2],
 
-      when 0x85 then [:sta, :zero_page,   2, 3]
-      when 0x95 then [:sta, :zero_page_x, 2, 4]
-      when 0x8d then [:sta, :absolute,    3, 4]
-      when 0x9d then [:sta, :absolute_x,  3, 5]
-      when 0x99 then [:sta, :absolute_y,  3, 5]
-      when 0x81 then [:sta, :indirect_x,  2, 6]
-      when 0x91 then [:sta, :indirect_y,  2, 6]
+      0x85 => [:sta, :zero_page,   2, 3],
+      0x95 => [:sta, :zero_page_x, 2, 4],
+      0x8d => [:sta, :absolute,    3, 4],
+      0x9d => [:sta, :absolute_x,  3, 5],
+      0x99 => [:sta, :absolute_y,  3, 5],
+      0x81 => [:sta, :indirect_x,  2, 6],
+      0x91 => [:sta, :indirect_y,  2, 6],
 
-      when 0x86 then [:stx, :zero_page,   2, 3]
-      when 0x96 then [:stx, :zero_page_y, 2, 4]
-      when 0x8e then [:stx, :absolute,    3, 4]
+      0x86 => [:stx, :zero_page,   2, 3],
+      0x96 => [:stx, :zero_page_y, 2, 4],
+      0x8e => [:stx, :absolute,    3, 4],
 
-      when 0x84 then [:sty, :zero_page,   2, 3]
-      when 0x94 then [:sty, :zero_page_x, 2, 4]
-      when 0x8c then [:sty, :absolute,    3, 4]
+      0x84 => [:sty, :zero_page,   2, 3],
+      0x94 => [:sty, :zero_page_x, 2, 4],
+      0x8c => [:sty, :absolute,    3, 4],
 
-      when 0xaa then [:tax, :implied,     1, 2]
-      when 0xa8 then [:tay, :implied,     1, 2]
-      when 0xba then [:tsx, :implied,     1, 2]
-      when 0x8a then [:txa, :implied,     1, 2]
-      when 0x9a then [:txs, :implied,     1, 2]
-      when 0x98 then [:tya, :implied,     1, 2]
-
-      end
-    end
+      0xaa => [:tax, :implied,     1, 2],
+      0xa8 => [:tay, :implied,     1, 2],
+      0xba => [:tsx, :implied,     1, 2],
+      0x8a => [:txa, :implied,     1, 2],
+      0x9a => [:txs, :implied,     1, 2],
+      0x98 => [:tya, :implied,     1, 2],
+    }
 
     ########################
     #ADDRESSING
@@ -551,8 +549,8 @@ module Hongbai
     end
 
     #2.AND
-    # Add an underscore to avoid conflict with the `and` keyword
-    def and_(addressing_mode, bytes, cycles)
+    # named to `und` to avoid conflict with the `and` keyword
+    def und(addressing_mode, bytes, cycles)
       addr = self.addressing(addressing_mode)
       oper = @m.read(addr)
 
@@ -1177,7 +1175,7 @@ module Hongbai
     def self.static_method_call
       defination = "case op\n"
       (0..255).each do |i|
-        if c = decode(i)
+        if c = OP_TABLE[i]
           defination += "when #{i} then #{send_args(c)}\n"
         end
       end
