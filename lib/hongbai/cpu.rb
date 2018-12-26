@@ -216,36 +216,6 @@ module Hongbai
       hi = @m.read(addr + 1)
       (hi << 8) | lo
     end
-    #############################
-    #States accessors
-    #############################
-    #def accumulator
-    #  @a.value
-    #end
-
-    #def x_register
-    #  @x.value
-    #end
-
-    #def y_register
-    #  @y.value
-    #end
-
-    #def pc
-    #  @pc.value
-    #end
-
-    #def p_register
-    #  @p.value
-    #end
-
-    #def stack_pointer
-    #  @sp.value
-    #end
-
-    #def mem
-    #  @m
-    #end
 
     def cycle
       @counter
@@ -444,61 +414,93 @@ module Hongbai
     #ADDRESSING
     #########################
     def addressing(mode)
-      case mode
-      when :immediate
-        addr = @pc.value + 1
-      when :zero_page
-        addr = @m.read(@pc.value + 1)
-      when :zero_page_x
-        addr = @m.read(@pc.value + 1) + @x.value & 0xff
-        @m.dummy_read(@pc.value + 2)
-      when :zero_page_y
-        addr = @m.read(@pc.value + 1) + @y.value & 0xff
-        @m.dummy_read(@pc.value + 2)
-      when :absolute
-        addr = read_u16(@pc.value + 1)
-      when :absolute_x
-        base_addr = read_u16(@pc.value + 1)
-        addr = base_addr + @x.value
-        if base_addr & 0xff00 != addr & 0xff00
-          @counter += 1
-          @m.dummy_read(addr - 0x100)
-        end
-      when :absolute_y
-        base_addr = read_u16(@pc.value + 1)
-        addr = base_addr + @y.value
-        if base_addr & 0xff00 != addr & 0xff00
-          @counter += 1
-          @m.dummy_read(addr - 0x100)
-        end
-      when :indirect
-        addr_addr = read_u16(@pc.value + 1)
-        addr = read_u16(addr_addr)
-      when :indirect_x
-        base_addr = @m.read(@pc.value + 1)
-        @m.dummy_read(@pc.value + 2)
-        addr_addr = (base_addr + @x.value) & 0xff
-        addr = read_u16(addr_addr)
-      when :indirect_y
-        addr_addr = @m.read(@pc.value + 1)
-        base_addr = read_u16(addr_addr)
-        addr = base_addr + @y.value
-        if base_addr & 0xff00 != addr & 0xff00
-          @counter += 1
-          @m.dummy_read(addr - 0x100)
-        end
-      when :accumulator
-        addr = nil
-      when :relative
-        addr = @pc.value + 1
-      when :implied
-        addr = nil
-      else
-        raise "Unknown Addresing Mode #{mode}"
-      end
-
-      return addr
+      send mode
     end
+
+    def immediate
+      @pc.value + 1
+    end
+
+    def zero_page
+      @m.read(@pc.value + 1)
+    end
+
+    def zero_page_x
+      base_addr = @m.read(@pc.value + 1)
+      @m.dummy_read(@pc.value + 2)
+      (base_addr + @x.value) & 0xff
+    end
+
+    def zero_page_y
+      base_addr = @m.read(@pc.value + 1)
+      @m.dummy_read(@pc.value + 2)
+      (base_addr + @y.value) & 0xff
+    end
+
+    def absolute
+      read_u16(@pc.value + 1)
+    end
+
+    def absolute_x
+      lo = @m.read(@pc.value + 1)
+      hi = @m.read(@pc.value + 2) << 8
+      sum = lo + @x.value
+      addr = hi | (sum & 0xff)
+      if sum > 0xff
+        # oops, there is a carry
+        @m.dummy_read addr
+        addr = (addr + 0x100) & 0xffff
+        @counter += 1
+      end
+      addr
+    end
+
+    def absolute_y
+      lo = @m.read(@pc.value + 1)
+      hi = @m.read(@pc.value + 2) << 8
+      sum = lo + @y.value
+      addr = hi | (sum & 0xff)
+      if sum > 0xff
+        @m.dummy_read addr
+        addr = (addr + 0x100) & 0xffff
+        @counter += 1
+      end
+      addr
+    end
+
+    def indirect
+      addr_addr = read_u16(@pc.value + 1)
+      read_u16 addr_addr
+    end
+
+    def indirect_x
+      base_addr = @m.read(@pc.value + 1)
+      @m.dummy_read(@pc.value + 2)
+      addr_addr = (base_addr + @x.value) & 0xff
+      read_u16 addr_addr
+    end
+
+    def indirect_y
+      addr_addr = @m.read(@pc.value + 1)
+      lo = @m.read(addr_addr)
+      hi = @m.read(addr_addr + 1) << 8
+      sum = lo + @y.value
+      addr = hi | (sum & 0xff)
+      if sum > 0xff
+        @m.dummy_read addr
+        addr = (addr + 0x100) & 0xffff
+        @counter += 1
+      end
+      addr
+    end
+
+    def accumulator; nil end
+
+    def relative
+      @pc.value + 1
+    end
+
+    def implied; nil end
 
     #########################
     #Deal with flags
@@ -1174,10 +1176,8 @@ module Hongbai
 
     def self.static_method_call
       defination = "case op\n"
-      (0..255).each do |i|
-        if c = OP_TABLE[i]
-          defination += "when #{i} then #{send_args(c)}\n"
-        end
+      OP_TABLE.each do |i, c|
+        defination += "when #{i} then #{send_args(c)}\n"
       end
       defination += "else #{unknown_op} end"
     end
