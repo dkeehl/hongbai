@@ -179,6 +179,7 @@ module Hongbai
       @sp.load(0xfd)
       @pc.load(read_u16(RESET_VECTOR))
 
+      @operand_addr = nil
       @trace = false
     end
 
@@ -186,7 +187,10 @@ module Hongbai
 
     def step
       opcode = @m.fetch(@pc.value)
-      run(opcode)
+      op, addressing, bytes, cycles = *OP_TABLE[opcode]
+      send(addressing)
+      send(op, bytes, cycles)
+      #run(opcode)
     end
 
     def suspend(cycles)
@@ -413,71 +417,65 @@ module Hongbai
     ########################
     #ADDRESSING
     #########################
-    def addressing(mode)
-      send mode
-    end
-
     def immediate
-      @pc.value + 1
+      @operand_addr = @pc.value + 1
     end
 
     def zero_page
-      @m.read(@pc.value + 1)
+      @operand_addr = @m.read(@pc.value + 1)
     end
 
     def zero_page_x
       base_addr = @m.read(@pc.value + 1)
       @m.dummy_read(@pc.value + 2)
-      (base_addr + @x.value) & 0xff
+      @operand_addr = (base_addr + @x.value) & 0xff
     end
 
     def zero_page_y
       base_addr = @m.read(@pc.value + 1)
       @m.dummy_read(@pc.value + 2)
-      (base_addr + @y.value) & 0xff
+      @operand_addr = (base_addr + @y.value) & 0xff
     end
 
     def absolute
-      read_u16(@pc.value + 1)
+      @operand_addr = read_u16(@pc.value + 1)
     end
 
     def absolute_x
       lo = @m.read(@pc.value + 1)
       hi = @m.read(@pc.value + 2) << 8
       sum = lo + @x.value
-      addr = hi | (sum & 0xff)
+      @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
         # oops, there is a carry
-        @m.dummy_read addr
-        addr = (addr + 0x100) & 0xffff
+        @m.dummy_read @operand_addr 
+        @operand_addr = (@operand_addr + 0x100) & 0xffff
         @counter += 1
       end
-      addr
     end
 
     def absolute_y
       lo = @m.read(@pc.value + 1)
       hi = @m.read(@pc.value + 2) << 8
       sum = lo + @y.value
-      addr = hi | (sum & 0xff)
+      @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
-        @m.dummy_read addr
-        addr = (addr + 0x100) & 0xffff
+        @m.dummy_read @operand_addr
+        @operand_addr = (@operand_addr + 0x100) & 0xffff
         @counter += 1
       end
-      addr
     end
 
     def indirect
       addr_addr = read_u16(@pc.value + 1)
-      read_u16 addr_addr
+      @operand_addr = read_u16(addr_addr)
     end
 
     def indirect_x
       base_addr = @m.read(@pc.value + 1)
       @m.dummy_read(@pc.value + 2)
       addr_addr = (base_addr + @x.value) & 0xff
-      read_u16 addr_addr
+      @operand_addr = read_u16(addr_addr)
     end
 
     def indirect_y
@@ -485,22 +483,27 @@ module Hongbai
       lo = @m.read(addr_addr)
       hi = @m.read(addr_addr + 1) << 8
       sum = lo + @y.value
-      addr = hi | (sum & 0xff)
+      @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
-        @m.dummy_read addr
-        addr = (addr + 0x100) & 0xffff
+        @m.dummy_read @operand_addr
+        @operand_addr = (@operand_addr + 0x100) & 0xffff
         @counter += 1
       end
-      addr
     end
 
-    def accumulator; nil end
+    def accumulator
+      @m.dummy_read(@pc.value + 1)
+      @operand_addr = nil
+    end
 
     def relative
-      @pc.value + 1
+      @operand_addr = @pc.value + 1
     end
 
-    def implied; nil end
+    def implied
+      @m.dummy_read(@pc.value + 1)
+      @operand_addr = nil
+    end
 
     #########################
     #Deal with flags
@@ -526,9 +529,8 @@ module Hongbai
     #########################
 
     #1.ADC
-    def adc(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper1 = @m.read(addr)
+    def adc(bytes, cycles)
+      oper1 = @m.read(@operand_addr)
       oper2 = @a.value
 
       result = if @p.carry_flag?
@@ -552,9 +554,8 @@ module Hongbai
 
     #2.AND
     # named to `und` to avoid conflict with the `and` keyword
-    def und(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.read(addr)
+    def und(bytes, cycles)
+      oper = @m.read(@operand_addr)
 
       result = oper & @a.value
 
@@ -567,14 +568,13 @@ module Hongbai
     end
 
     #3.ASL
-    def asl(addressing_mode, bytes, cycles)
-      if addressing_mode == :accumulator
+    def asl(bytes, cycles)
+      if @operand_addr.nil?
         result = @a.value << 1
         @a.load(result & 0xff)
       else
-        addr = addressing(addressing_mode)
-        result = @m.read(addr) << 1
-        @m.load(addr, result & 0xff)
+        result = @m.read(@operand_addr) << 1
+        @m.load(@operand_addr, result & 0xff)
       end
 
       set_carry(result)
@@ -602,24 +602,23 @@ module Hongbai
       @pc.step(bytes)
     end
 
-    def bcc(addressing_mode, bytes, cycles)
+    def bcc(bytes, cycles)
       select_branch(bytes, cycles, !@p.carry_flag?)
     end
 
     #5.BCS
-    def bcs(addressing_mode, bytes, cycles)
+    def bcs(bytes, cycles)
       select_branch(bytes, cycles, @p.carry_flag?)
     end
 
     #6.BEQ
-    def beq(addressing_mode, bytes, cycles)
+    def beq(bytes, cycles)
       select_branch(bytes, cycles, @p.zero_flag?)
     end
 
     #7.BIT
-    def bit(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def bit(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
 
       result = @a.value & oper
       bit6 = oper >> 6 & 1
@@ -633,17 +632,17 @@ module Hongbai
     end
 
     #8.BMI
-    def bmi(addressing_mode, bytes, cycles)
+    def bmi(bytes, cycles)
       select_branch(bytes, cycles, @p.negative_flag?)
     end
 
     #9.BNE
-    def bne(addressing_mode, bytes, cycles)
+    def bne(bytes, cycles)
       select_branch(bytes, cycles, !@p.zero_flag?)
     end
 
     #10.BPL
-    def bpl(addressing_mode, bytes, cycles)
+    def bpl(bytes, cycles)
       select_branch(bytes, cycles, !@p.negative_flag?)
     end
 
@@ -655,7 +654,7 @@ module Hongbai
       @sp.add(-1)
     end
 
-    def brk(addressing_mode, bytes, cycles)
+    def brk(bytes, cycles)
       @pc.step
       push(@pc.value >> 8 & 0xff)
       push(@pc.value & 0xff)
@@ -666,47 +665,46 @@ module Hongbai
     end
 
     #12.BVC
-    def bvc(addressing_mode, bytes, cycles)
+    def bvc(bytes, cycles)
       select_branch(bytes, cycles, !@p.overflow_flag?)
     end
 
     #13.BVS
-    def bvs(addressing_mode, bytes, cycles)
+    def bvs(bytes, cycles)
       select_branch(bytes, cycles, @p.overflow_flag?)
     end
 
     #14.CLC
-    def clc(addressing_mode, bytes, cycles)
+    def clc(bytes, cycles)
       @p.clear_carry_flag
       @pc.step bytes
       @counter += cycles
     end
 
     #15.CLD
-    def cld(addressing_mode, bytes, cycles)
+    def cld(bytes, cycles)
       @p.unset_decimal_mode
       @pc.step bytes
       @counter += cycles
     end
 
     #16.CLI
-    def cli(addressing_mode, bytes, cycles)
+    def cli(bytes, cycles)
       @p.enable_interrupt
       @pc.step bytes
       @counter += cycles
     end
 
     #17.CLV
-    def clv(addressing_mode, bytes, cycles)
+    def clv(bytes, cycles)
       @p.clear_overflow_flag
       @pc.step bytes
       @counter += cycles
     end
 
     #18.CMP
-    def cmp(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def cmp(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = @a.value - oper
 
       set_zero(result)
@@ -718,9 +716,8 @@ module Hongbai
     end
 
     #19.CPX
-    def cpx(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def cpx(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = @x.value - oper
 
       set_zero(result)
@@ -732,9 +729,8 @@ module Hongbai
     end
 
     #20.CPY
-    def cpy(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def cpy(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = @y.value - oper
 
       set_zero(result)
@@ -746,21 +742,20 @@ module Hongbai
     end
 
     #21.DEC
-    def dec(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def dec(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = (oper - 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @m.load(addr, result)
+      @m.load(@operand_addr, result)
       @pc.step bytes
       @counter += cycles
     end
 
     #22.DEX
-    def dex(addressing_mode, bytes, cycles)
+    def dex(bytes, cycles)
       result = (@x.value - 1) & 0xff
 
       set_zero(result)
@@ -772,7 +767,7 @@ module Hongbai
     end
 
     #23.DEY
-    def dey(addressing_mode, bytes, cycles)
+    def dey(bytes, cycles)
       result = (@y.value - 1) & 0xff
 
       set_zero(result)
@@ -784,9 +779,8 @@ module Hongbai
     end
 
     #24.EOR
-    def eor(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def eor(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = @a.value ^ oper
 
       set_zero(result)
@@ -797,21 +791,20 @@ module Hongbai
     end
 
     #25.INC
-    def inc(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def inc(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = (oper + 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @m.load(addr, result)
+      @m.load(@operand_addr, result)
       @pc.step bytes
       @counter += cycles
     end
 
     #26.INX
-    def inx(addressing_mode, bytes, cycles)
+    def inx(bytes, cycles)
       result = (@x.value + 1) & 0xff
 
       set_zero(result)
@@ -823,7 +816,7 @@ module Hongbai
     end
 
     #27.INY
-    def iny(addressing_mode, bytes, cycles)
+    def iny(bytes, cycles)
       result = (@y.value + 1) & 0xff
 
       set_zero(result)
@@ -835,26 +828,23 @@ module Hongbai
     end
 
     #28.JMP
-    def jmp(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      @pc.load addr
+    def jmp(bytes, cycles)
+      @pc.load @operand_addr
       @counter += cycles
     end
 
     #29.JSR
-    def jsr(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
+    def jsr(bytes, cycles)
       return_addr = @pc.value + 2
       push(return_addr >> 8 & 0xff)
       push(return_addr & 0xff)
-      @pc.load addr
+      @pc.load @operand_addr 
       @counter += cycles
     end
 
     #30.LDA
-    def lda(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def lda(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
 
       @a.load oper
       set_zero(oper)
@@ -865,9 +855,8 @@ module Hongbai
     end
 
     #31.LDX
-    def ldx(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def ldx(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
 
       @x.load oper
       set_zero(oper)
@@ -878,9 +867,8 @@ module Hongbai
     end
 
     #32.LDY
-    def ldy(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def ldy(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
 
       @y.load oper
       set_zero(oper)
@@ -891,17 +879,16 @@ module Hongbai
     end
 
     #33.Logical Shift Right
-    def lsr(addressing_mode, bytes, cycles)
-      if addressing_mode == :accumulator
+    def lsr(bytes, cycles)
+      if @operand_addr.nil?
         result = @a.value >> 1
         @p.carry = @a.value & 1 == 1
         @a.load result
       else
-        addr = self.addressing(addressing_mode)
-        oper = @m.fetch(addr)
+        oper = @m.fetch(@operand_addr)
         @p.carry = oper & 1 == 1
         result = oper >> 1
-        @m.load(addr, result)
+        @m.load(@operand_addr, result)
       end
 
       set_zero(result)
@@ -912,15 +899,14 @@ module Hongbai
     end
 
     #34.NOP
-    def nop(addressing_mode, bytes, cycles)
+    def nop(bytes, cycles)
       @pc.step bytes
       @counter += cycles
     end
 
     #35.ORA
-    def ora(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      oper = @m.fetch(addr)
+    def ora(bytes, cycles)
+      oper = @m.fetch(@operand_addr)
       result = @a.value | oper
 
       set_zero(result)
@@ -931,7 +917,7 @@ module Hongbai
     end
 
     #36.PHA
-    def pha(addressing_mode, bytes, cycles)
+    def pha(bytes, cycles)
       self.push @a.value
 
       @pc.step bytes
@@ -939,9 +925,9 @@ module Hongbai
     end
 
     #37.PHP
-    def php(addressing_mode, bytes, cycles)
+    def php(bytes, cycles)
       @p.set_break_commond
-      self.push @p.value | 0x20
+      self.push @p.value
 
       @pc.step bytes
       @counter += cycles
@@ -955,7 +941,7 @@ module Hongbai
       return a
     end
 
-    def pla(addressing_mode, bytes, cycles)
+    def pla(bytes, cycles)
       @a.load(self.pull)
 
       set_zero(@a.value)
@@ -965,22 +951,21 @@ module Hongbai
     end
 
     #39.PLP
-    def plp(addressing_mode, bytes, cycles)
-      @p.load(self.pull | 0x20)
+    def plp(bytes, cycles)
+      @p.load(self.pull)
 
       @pc.step bytes
       @counter += cycles
     end
 
     #40.Rotate Left
-    def rol(addressing_mode, bytes, cycles)
-      if addressing_mode == :accumulator
+    def rol(bytes, cycles)
+      if @operand_addr.nil?
         result = @a.value << 1 | (@p.value & 0x1)
         @a.load(result & 0xff)
       else
-        addr = addressing(addressing_mode)
-        result = @m.read(addr) << 1 | (@p.value & 0x1)
-        @m.load(addr, result & 0xff)
+        result = @m.read(@operand_addr) << 1 | (@p.value & 0x1)
+        @m.load(@operand_addr, result & 0xff)
       end
 
       set_carry(result)
@@ -992,17 +977,16 @@ module Hongbai
     end
 
     #41.Rotate Right
-    def ror(addressing_mode, bytes, cycles)
-      if addressing_mode == :accumulator
+    def ror(bytes, cycles)
+      if @operand_addr.nil?
         result = (@p.value & 1) << 7 | @a.value >> 1
         @p.carry = @a.value & 1 == 1
         @a.load(result)
       else
-        addr = self.addressing(addressing_mode)
-        data = @m.fetch(addr)
+        data = @m.fetch(@operand_addr)
         result = (@p.value & 1) << 7 | data >> 1
         @p.carry = data & 1 == 1
-        @m.load(addr, result)
+        @m.load(@operand_addr, result)
       end
 
       set_zero(result)
@@ -1013,8 +997,8 @@ module Hongbai
     end
 
     #42.RTI
-    def rti(addressing_mode, bytes, cycles)
-      @p.load(self.pull | 0x20)
+    def rti(bytes, cycles)
+      @p.load(self.pull)
       addr_low = self.pull
       addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
@@ -1023,7 +1007,7 @@ module Hongbai
     end
 
     #43.RTS
-    def rts(addressing_mode, bytes, cycles)
+    def rts(bytes, cycles)
       addr_low = self.pull
       addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
@@ -1033,10 +1017,9 @@ module Hongbai
     end
 
     #44.Subtract with Carry
-    def sbc(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
+    def sbc(bytes, cycles)
       oper1 = @a.value
-      oper2 = @m.fetch(addr)
+      oper2 = @m.fetch(@operand_addr)
 
       result = oper1 + (oper2 ^ 0xff) + (@p.carry_flag? ? 1 : 0)
 
@@ -1053,55 +1036,52 @@ module Hongbai
     end
 
     #45.SEC
-    def sec(addressing_mode, bytes, cycles)
+    def sec(bytes, cycles)
       @p.set_carry_flag
       @pc.step bytes
       @counter += cycles
     end
 
     #46.SED
-    def sed(addressing_mode, bytes, cycles)
+    def sed(bytes, cycles)
       @p.set_decimal_mode
       @pc.step bytes
       @counter += cycles
     end
 
     #47.SEI
-    def sei(addressing_mode, bytes, cycles)
+    def sei(bytes, cycles)
       @p.disable_interrupt
       @pc.step bytes
       @counter += cycles
     end
 
     #48.Store the Accumulator in Memory
-    def sta(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      @m.load(addr, @a.value)
+    def sta(bytes, cycles)
+      @m.load(@operand_addr, @a.value)
 
       @pc.step bytes
       @counter += cycles
     end
 
     #49.STX
-    def stx(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      @m.load(addr, @x.value)
+    def stx(bytes, cycles)
+      @m.load(@operand_addr, @x.value)
 
       @pc.step bytes
       @counter += cycles
     end
 
     #50.STY
-    def sty(addressing_mode, bytes, cycles)
-      addr = self.addressing(addressing_mode)
-      @m.load(addr, @y.value)
+    def sty(bytes, cycles)
+      @m.load(@operand_addr, @y.value)
 
       @pc.step bytes
       @counter += cycles
     end
 
     #51.TAX
-    def tax(addressing_mode, bytes, cycles)
+    def tax(bytes, cycles)
       @x.load(@a.value)
 
       set_zero(@x.value)
@@ -1112,7 +1092,7 @@ module Hongbai
     end
 
     #52.TAY
-    def tay(addressing_mode, bytes, cycles)
+    def tay(bytes, cycles)
       @y.load(@a.value)
 
       set_zero(@y.value)
@@ -1123,7 +1103,7 @@ module Hongbai
     end
 
     #53.TSX
-    def tsx(addressing_mode, bytes, cycles)
+    def tsx(bytes, cycles)
       @x.load(@sp.value)
 
       set_zero(@x.value)
@@ -1134,7 +1114,7 @@ module Hongbai
     end
 
     #54.TXA
-    def txa(addressing_mode, bytes, cycles)
+    def txa(bytes, cycles)
       @a.load(@x.value)
 
       set_zero(@a.value)
@@ -1145,7 +1125,7 @@ module Hongbai
     end
 
     #55.TXS
-    def txs(addressing_mode, bytes, cycles)
+    def txs(bytes, cycles)
       @sp.load(@x.value)
 
       @pc.step bytes
@@ -1153,7 +1133,7 @@ module Hongbai
     end
 
     #56.TYA
-    def tya(addressing_mode, bytes, cycles)
+    def tya(bytes, cycles)
       @a.load(@y.value)
 
       set_zero(@a.value)
@@ -1170,8 +1150,8 @@ module Hongbai
     # generate a method call from the array returned from `decode`
     # args: [method, address_mode, bytes, cycles]
     def self.send_args(args)
-      method, addr_mode, bytes, cy = *args
-      "#{method}(:#{addr_mode}, #{bytes}, #{cy})"
+      method, _, bytes, cy = *args
+      "#{method}(#{bytes}, #{cy})"
     end
 
     def self.static_method_call
