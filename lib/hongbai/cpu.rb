@@ -52,7 +52,7 @@ module Hongbai
       @negative = false
     end
 
-    attr_writer :carry, :zero, :overflow, :negative
+    attr_accessor :carry, :zero, :overflow, :negative
 
     def value
       bit0 = @carry ? 0b0000_0001 : 0
@@ -180,6 +180,7 @@ module Hongbai
       @pc.load(read_u16(RESET_VECTOR))
 
       @operand_addr = nil
+      @address_carry = nil
       @trace = false
     end
 
@@ -203,6 +204,7 @@ module Hongbai
       push(@p.value)
       @p.disable_interrupt
       @pc.load(read_u16(NMI_VECTOR))
+      @counter += 7
     end
 
     def irq
@@ -213,6 +215,7 @@ module Hongbai
       push(@p.value)
       @p.disable_interrupt
       @pc.load(read_u16(BRK_VECTOR))
+      @counter += 7
     end
 
     def read_u16(addr)
@@ -342,8 +345,8 @@ module Hongbai
 
       0x4a => [:lsr, :accumulator, 1, 2],
       0x46 => [:lsr, :zero_page,   2, 5],
-      0x56 => [:lsr, :zero_page_x, 2, 4],
-      0x4e => [:lsr, :absolute,    3, 4],
+      0x56 => [:lsr, :zero_page_x, 2, 6],
+      0x4e => [:lsr, :absolute,    3, 6],
       0x5e => [:lsr, :absolute_x,  3, 7],
 
       0xea => [:nop, :implied,     1, 2],
@@ -448,9 +451,10 @@ module Hongbai
       @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
         # oops, there is a carry
-        @m.dummy_read @operand_addr 
-        @operand_addr = (@operand_addr + 0x100) & 0xffff
+        @address_carry = true
         @counter += 1
+      else
+        @address_carry = false
       end
     end
 
@@ -460,9 +464,10 @@ module Hongbai
       sum = lo + @y.value
       @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
-        @m.dummy_read @operand_addr
-        @operand_addr = (@operand_addr + 0x100) & 0xffff
+        @address_carry = true
         @counter += 1
+      else
+        @address_carry = false
       end
     end
 
@@ -485,9 +490,10 @@ module Hongbai
       sum = lo + @y.value
       @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
-        @m.dummy_read @operand_addr
-        @operand_addr = (@operand_addr + 0x100) & 0xffff
+        @address_carry = true
         @counter += 1
+      else
+        @address_carry = false
       end
     end
 
@@ -503,6 +509,24 @@ module Hongbai
     def implied
       @m.dummy_read(@pc.value + 1)
       @operand_addr = nil
+    end
+
+    def fix_address
+      @m.read(@operand_addr)
+      @operand_addr = (@operand_addr + 0x100) & 0xffff if @address_carry
+      @address_carry = nil
+    end
+
+    def read_or_fix_read
+      val = @m.read(@operand_addr)
+      if @address_carry.nil?
+        return val
+      elsif @address_carry
+        @operand_addr = (@operand_addr + 0x100) & 0xffff
+        val = @m.read(@operand_addr)
+      end
+      @address_carry = nil
+      val
     end
 
     #########################
@@ -525,12 +549,36 @@ module Hongbai
     end
 
     #########################
+    # Helper functions
+    # #######################
+
+    # Read-Modify-Write instructions write the original value back first then
+    # write the new value
+    def update(orig_val, val)
+      @m.load(@operand_addr, orig_val)
+      @m.load(@operand_addr, val)
+    end
+
+    def push(data)
+      #descending stack starts the stack pointer at the end of the array
+      #decreases on a push, inreases it on a pull
+      @m.load(@sp.value + 0x100, data)
+      @sp.add(-1)
+    end
+
+    def pull
+      #empty stack, SP moves before pull
+      @sp.add 1
+      @m.fetch(@sp.value + 0x100)   
+    end
+
+    #########################
     #INSTRUCTION SET
     #########################
 
     #1.ADC
     def adc(bytes, cycles)
-      oper1 = @m.read(@operand_addr)
+      oper1 = read_or_fix_read
       oper2 = @a.value
 
       result = if @p.carry_flag?
@@ -555,7 +603,7 @@ module Hongbai
     #2.AND
     # named to `und` to avoid conflict with the `and` keyword
     def und(bytes, cycles)
-      oper = @m.read(@operand_addr)
+      oper = read_or_fix_read
 
       result = oper & @a.value
 
@@ -573,8 +621,10 @@ module Hongbai
         result = @a.value << 1
         @a.load(result & 0xff)
       else
-        result = @m.read(@operand_addr) << 1
-        @m.load(@operand_addr, result & 0xff)
+        fix_address unless @address_carry.nil?
+        oper = @m.read(@operand_addr)
+        result = oper << 1
+        update(oper, result)
       end
 
       set_carry(result)
@@ -587,11 +637,13 @@ module Hongbai
 
     #4.BCC
     def select_branch(bytes, cycles, test)
+      oper = @m.read(@operand_addr)
       if test
-        oper = @m.fetch(@pc.value + 1)
         orig_pc = @pc.value
+        @m.dummy_read(@operand_addr + 1)
         @pc.relative_move(oper)
         if @pc.value & 0xff00 != orig_pc & 0xff00
+          @m.dummy_read(@pc.value - 0x100)
           @counter += 2
         else
           @counter += 1
@@ -647,13 +699,6 @@ module Hongbai
     end
 
     #11.BRK
-    def push(data)
-      #descending stack starts the stack pointer at the end of the array
-      #decreases on a push, inreases it on a pull
-      @m.load(@sp.value + 0x100, data)
-      @sp.add(-1)
-    end
-
     def brk(bytes, cycles)
       @pc.step
       push(@pc.value >> 8 & 0xff)
@@ -662,6 +707,7 @@ module Hongbai
       push(@p.value)
       @p.disable_interrupt
       @pc.load(@m.fetch(0xfffe) | @m.fetch(0xffff) << 8)
+      @counter += cycles
     end
 
     #12.BVC
@@ -704,7 +750,7 @@ module Hongbai
 
     #18.CMP
     def cmp(bytes, cycles)
-      oper = @m.fetch(@operand_addr)
+      oper = read_or_fix_read
       result = @a.value - oper
 
       set_zero(result)
@@ -743,13 +789,14 @@ module Hongbai
 
     #21.DEC
     def dec(bytes, cycles)
+      fix_address unless @address_carry.nil?
       oper = @m.fetch(@operand_addr)
       result = (oper - 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @m.load(@operand_addr, result)
+      update(oper, result)
       @pc.step bytes
       @counter += cycles
     end
@@ -780,7 +827,7 @@ module Hongbai
 
     #24.EOR
     def eor(bytes, cycles)
-      oper = @m.fetch(@operand_addr)
+      oper = read_or_fix_read
       result = @a.value ^ oper
 
       set_zero(result)
@@ -792,13 +839,14 @@ module Hongbai
 
     #25.INC
     def inc(bytes, cycles)
+      fix_address unless @address_carry.nil?
       oper = @m.fetch(@operand_addr)
       result = (oper + 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @m.load(@operand_addr, result)
+      update(oper, result)
       @pc.step bytes
       @counter += cycles
     end
@@ -836,6 +884,7 @@ module Hongbai
     #29.JSR
     def jsr(bytes, cycles)
       return_addr = @pc.value + 2
+      @m.dummy_read(@sp.value + 0x100)
       push(return_addr >> 8 & 0xff)
       push(return_addr & 0xff)
       @pc.load @operand_addr 
@@ -844,7 +893,7 @@ module Hongbai
 
     #30.LDA
     def lda(bytes, cycles)
-      oper = @m.fetch(@operand_addr)
+      oper = read_or_fix_read
 
       @a.load oper
       set_zero(oper)
@@ -856,7 +905,7 @@ module Hongbai
 
     #31.LDX
     def ldx(bytes, cycles)
-      oper = @m.fetch(@operand_addr)
+      oper = read_or_fix_read
 
       @x.load oper
       set_zero(oper)
@@ -868,7 +917,7 @@ module Hongbai
 
     #32.LDY
     def ldy(bytes, cycles)
-      oper = @m.fetch(@operand_addr)
+      oper = read_or_fix_read
 
       @y.load oper
       set_zero(oper)
@@ -885,10 +934,11 @@ module Hongbai
         @p.carry = @a.value & 1 == 1
         @a.load result
       else
+        fix_address unless @address_carry.nil?
         oper = @m.fetch(@operand_addr)
         @p.carry = oper & 1 == 1
         result = oper >> 1
-        @m.load(@operand_addr, result)
+        update(oper, result)
       end
 
       set_zero(result)
@@ -906,7 +956,7 @@ module Hongbai
 
     #35.ORA
     def ora(bytes, cycles)
-      oper = @m.fetch(@operand_addr)
+      oper = read_or_fix_read
       result = @a.value | oper
 
       set_zero(result)
@@ -934,14 +984,8 @@ module Hongbai
     end
 
     #38.PLA
-    def pull
-      #empty stack, SP moves before pull
-      @sp.add 1
-      a = @m.fetch(@sp.value + 0x100)   
-      return a
-    end
-
     def pla(bytes, cycles)
+      @m.dummy_read(@sp.value + 0x100)
       @a.load(self.pull)
 
       set_zero(@a.value)
@@ -952,6 +996,7 @@ module Hongbai
 
     #39.PLP
     def plp(bytes, cycles)
+      @m.dummy_read(@sp.value + 0x100)
       @p.load(self.pull)
 
       @pc.step bytes
@@ -961,11 +1006,13 @@ module Hongbai
     #40.Rotate Left
     def rol(bytes, cycles)
       if @operand_addr.nil?
-        result = @a.value << 1 | (@p.value & 0x1)
+        result = @a.value << 1 | (@p.carry ? 1 : 0)
         @a.load(result & 0xff)
       else
-        result = @m.read(@operand_addr) << 1 | (@p.value & 0x1)
-        @m.load(@operand_addr, result & 0xff)
+        fix_address unless @address_carry.nil?
+        oper = @m.read(@operand_addr)
+        result = oper << 1 | (@p.carry ? 1 : 0)
+        update(oper, result & 0xff)
       end
 
       set_carry(result)
@@ -983,10 +1030,11 @@ module Hongbai
         @p.carry = @a.value & 1 == 1
         @a.load(result)
       else
+        fix_address unless @address_carry.nil?
         data = @m.fetch(@operand_addr)
         result = (@p.value & 1) << 7 | data >> 1
         @p.carry = data & 1 == 1
-        @m.load(@operand_addr, result)
+        update(data, result)
       end
 
       set_zero(result)
@@ -998,6 +1046,7 @@ module Hongbai
 
     #42.RTI
     def rti(bytes, cycles)
+      @m.dummy_read(@sp.value + 0x100)
       @p.load(self.pull)
       addr_low = self.pull
       addr_high = self.pull
@@ -1008,9 +1057,11 @@ module Hongbai
 
     #43.RTS
     def rts(bytes, cycles)
+      @m.dummy_read(@sp.value + 0x100)
       addr_low = self.pull
       addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
+      @m.dummy_read(@pc.value)
       @pc.step
 
       @counter += cycles
@@ -1019,7 +1070,7 @@ module Hongbai
     #44.Subtract with Carry
     def sbc(bytes, cycles)
       oper1 = @a.value
-      oper2 = @m.fetch(@operand_addr)
+      oper2 = read_or_fix_read
 
       result = oper1 + (oper2 ^ 0xff) + (@p.carry_flag? ? 1 : 0)
 
@@ -1058,6 +1109,7 @@ module Hongbai
 
     #48.Store the Accumulator in Memory
     def sta(bytes, cycles)
+      fix_address unless @address_carry.nil?
       @m.load(@operand_addr, @a.value)
 
       @pc.step bytes
