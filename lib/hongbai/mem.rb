@@ -27,6 +27,7 @@ module Hongbai
     # $4020 - $ffff cartridge space
     def read(addr)
       on_cpu_cycle
+      do_oma_dmc(addr) if @dma_triggered
       if addr < 0x2000
         @ram[addr & 0x7ff]
       elsif addr < 0x4000
@@ -66,6 +67,18 @@ module Hongbai
         nil
       else
         @rom.prg_store(addr, val)
+      end
+    end
+
+    def do_oma_dmc(addr)
+      start = @dma_triggered << 8
+      @dma_triggered = nil
+      dummy_read addr
+      dummy_read addr if @cycle.odd?
+      256.times do |i|
+        val = read(start + i)
+        on_cpu_cycle
+        @ppu.write_oam_data(val)
       end
     end
 
