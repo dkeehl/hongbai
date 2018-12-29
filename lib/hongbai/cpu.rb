@@ -167,9 +167,9 @@ module Hongbai
 
     def initialize(mem)
       @m = mem
-      @a = Register.new             #Accumulator Register
-      @x = Register.new             #Index Register X
-      @y = Register.new             #Index Register Y
+      @a = 0 #Accumulator Register
+      @x = 0 #Index Register X
+      @y = 0 #Index Register Y
       @pc = ProgramCounter.new
       @sp = Register.new            #Stack Pointer
       @p = StatusRegister.new
@@ -192,10 +192,6 @@ module Hongbai
       send(addressing)
       send(op, bytes, cycles)
       #run(opcode)
-    end
-
-    def suspend(cycles)
-      @counter += cycles
     end
 
     def nmi
@@ -435,13 +431,13 @@ module Hongbai
     def zero_page_x
       base_addr = @m.read(@pc.value + 1)
       @m.dummy_read(@pc.value + 2)
-      @operand_addr = (base_addr + @x.value) & 0xff
+      @operand_addr = (base_addr + @x) & 0xff
     end
 
     def zero_page_y
       base_addr = @m.read(@pc.value + 1)
       @m.dummy_read(@pc.value + 2)
-      @operand_addr = (base_addr + @y.value) & 0xff
+      @operand_addr = (base_addr + @y) & 0xff
     end
 
     def absolute
@@ -451,7 +447,7 @@ module Hongbai
     def absolute_x
       lo = @m.read(@pc.value + 1)
       hi = @m.read(@pc.value + 2) << 8
-      sum = lo + @x.value
+      sum = lo + @x
       @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
         # oops, there is a carry
@@ -465,7 +461,7 @@ module Hongbai
     def absolute_y
       lo = @m.read(@pc.value + 1)
       hi = @m.read(@pc.value + 2) << 8
-      sum = lo + @y.value
+      sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
         @address_carry = true
@@ -483,7 +479,7 @@ module Hongbai
     def indirect_x
       base_addr = @m.read(@pc.value + 1)
       @m.dummy_read(@pc.value + 2)
-      addr_addr = (base_addr + @x.value) & 0xff
+      addr_addr = (base_addr + @x) & 0xff
       @operand_addr = read_u16(addr_addr)
     end
 
@@ -491,7 +487,7 @@ module Hongbai
       addr_addr = @m.read(@pc.value + 1)
       lo = @m.read(addr_addr)
       hi = @m.read(addr_addr + 1) << 8
-      sum = lo + @y.value
+      sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
       if sum > 0xff
         @address_carry = true
@@ -583,7 +579,7 @@ module Hongbai
     #1.ADC
     def adc(bytes, cycles)
       oper1 = read_or_fix_read
-      oper2 = @a.value
+      oper2 = @a
 
       result = if @p.carry_flag?
                  oper1 + oper2 + 1
@@ -599,7 +595,7 @@ module Hongbai
       set_zero(result)
       set_negative(result)
 
-      @a.load(result)
+      @a = result
       @pc.step(bytes)
       @counter += cycles
     end
@@ -608,13 +604,11 @@ module Hongbai
     # named to `und` to avoid conflict with the `and` keyword
     def und(bytes, cycles)
       oper = read_or_fix_read
+      @a &= oper
 
-      result = oper & @a.value
+      set_zero(@a)
+      set_negative(@a)
 
-      set_zero(result)
-      set_negative(result)
-
-      @a.load(result)
       @pc.step(bytes)
       @counter += cycles
     end
@@ -622,8 +616,8 @@ module Hongbai
     #3.ASL
     def asl(bytes, cycles)
       if @operand_addr.nil?
-        result = @a.value << 1
-        @a.load(result & 0xff)
+        result = @a << 1
+        @a = result & 0xff
       else
         fix_address unless @address_carry.nil?
         oper = @m.read(@operand_addr)
@@ -676,7 +670,7 @@ module Hongbai
     def bit(bytes, cycles)
       oper = @m.fetch(@operand_addr)
 
-      result = @a.value & oper
+      result = @a & oper
       bit6 = oper >> 6 & 1
 
       set_zero(result)
@@ -755,7 +749,7 @@ module Hongbai
     #18.CMP
     def cmp(bytes, cycles)
       oper = read_or_fix_read
-      result = @a.value - oper
+      result = @a - oper
 
       set_zero(result)
       set_negative(result)
@@ -768,7 +762,7 @@ module Hongbai
     #19.CPX
     def cpx(bytes, cycles)
       oper = @m.fetch(@operand_addr)
-      result = @x.value - oper
+      result = @x - oper
 
       set_zero(result)
       set_negative(result)
@@ -781,7 +775,7 @@ module Hongbai
     #20.CPY
     def cpy(bytes, cycles)
       oper = @m.fetch(@operand_addr)
-      result = @y.value - oper
+      result = @y - oper
 
       set_zero(result)
       set_negative(result)
@@ -807,24 +801,24 @@ module Hongbai
 
     #22.DEX
     def dex(bytes, cycles)
-      result = (@x.value - 1) & 0xff
+      result = (@x - 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @x.load(result)
+      @x = result
       @pc.step bytes
       @counter += cycles
     end
 
     #23.DEY
     def dey(bytes, cycles)
-      result = (@y.value - 1) & 0xff
+      result = (@y - 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @y.load(result)
+      @y = result
       @pc.step bytes
       @counter += cycles
     end
@@ -832,11 +826,11 @@ module Hongbai
     #24.EOR
     def eor(bytes, cycles)
       oper = read_or_fix_read
-      result = @a.value ^ oper
+      result = @a ^ oper
 
       set_zero(result)
       set_negative(result)
-      @a.load(result)
+      @a = result
       @pc.step bytes
       @counter += cycles
     end
@@ -857,24 +851,24 @@ module Hongbai
 
     #26.INX
     def inx(bytes, cycles)
-      result = (@x.value + 1) & 0xff
+      result = (@x + 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @x.load(result)
+      @x = result
       @pc.step bytes
       @counter += cycles
     end
 
     #27.INY
     def iny(bytes, cycles)
-      result = (@y.value + 1) & 0xff
+      result = (@y + 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
-      @y.load(result)
+      @y = result
       @pc.step bytes
       @counter += cycles
     end
@@ -899,7 +893,7 @@ module Hongbai
     def lda(bytes, cycles)
       oper = read_or_fix_read
 
-      @a.load oper
+      @a = oper
       set_zero(oper)
       set_negative(oper)
 
@@ -911,7 +905,7 @@ module Hongbai
     def ldx(bytes, cycles)
       oper = read_or_fix_read
 
-      @x.load oper
+      @x = oper
       set_zero(oper)
       set_negative(oper)
 
@@ -923,7 +917,7 @@ module Hongbai
     def ldy(bytes, cycles)
       oper = read_or_fix_read
 
-      @y.load oper
+      @y = oper
       set_zero(oper)
       set_negative(oper)
 
@@ -934,9 +928,9 @@ module Hongbai
     #33.Logical Shift Right
     def lsr(bytes, cycles)
       if @operand_addr.nil?
-        result = @a.value >> 1
-        @p.carry = @a.value & 1 == 1
-        @a.load result
+        result = @a >> 1
+        @p.carry = @a & 1 == 1
+        @a = result
       else
         fix_address unless @address_carry.nil?
         oper = @m.fetch(@operand_addr)
@@ -961,18 +955,18 @@ module Hongbai
     #35.ORA
     def ora(bytes, cycles)
       oper = read_or_fix_read
-      result = @a.value | oper
+      result = @a | oper
 
       set_zero(result)
       set_negative(result)
-      @a.load(result)
+      @a = result
       @pc.step bytes
       @counter += cycles
     end
 
     #36.PHA
     def pha(bytes, cycles)
-      self.push @a.value
+      push @a
 
       @pc.step bytes
       @counter += cycles
@@ -981,7 +975,7 @@ module Hongbai
     #37.PHP
     def php(bytes, cycles)
       @p.set_break_commond
-      self.push @p.value
+      push @p.value
 
       @pc.step bytes
       @counter += cycles
@@ -990,10 +984,10 @@ module Hongbai
     #38.PLA
     def pla(bytes, cycles)
       @m.dummy_read(@sp.value + 0x100)
-      @a.load(self.pull)
+      @a = self.pull
 
-      set_zero(@a.value)
-      set_negative(@a.value)
+      set_zero(@a)
+      set_negative(@a)
       @pc.step bytes
       @counter += cycles
     end
@@ -1010,8 +1004,8 @@ module Hongbai
     #40.Rotate Left
     def rol(bytes, cycles)
       if @operand_addr.nil?
-        result = @a.value << 1 | (@p.carry ? 1 : 0)
-        @a.load(result & 0xff)
+        result = @a << 1 | (@p.carry ? 1 : 0)
+        @a = result & 0xff
       else
         fix_address unless @address_carry.nil?
         oper = @m.read(@operand_addr)
@@ -1030,9 +1024,9 @@ module Hongbai
     #41.Rotate Right
     def ror(bytes, cycles)
       if @operand_addr.nil?
-        result = (@p.value & 1) << 7 | @a.value >> 1
-        @p.carry = @a.value & 1 == 1
-        @a.load(result)
+        result = (@p.value & 1) << 7 | @a >> 1
+        @p.carry = @a & 1 == 1
+        @a = result
       else
         fix_address unless @address_carry.nil?
         data = @m.fetch(@operand_addr)
@@ -1073,7 +1067,7 @@ module Hongbai
 
     #44.Subtract with Carry
     def sbc(bytes, cycles)
-      oper1 = @a.value
+      oper1 = @a
       oper2 = read_or_fix_read
 
       result = oper1 + (oper2 ^ 0xff) + (@p.carry_flag? ? 1 : 0)
@@ -1085,7 +1079,7 @@ module Hongbai
       @p.overflow = (oper1 & 0x80 != oper2 & 0x80) &&
                     (oper1 & 0x80 != result & 0x80)
 
-      @a.load(result & 0xff)
+      @a = result & 0xff
       @pc.step bytes
       @counter += cycles
     end
@@ -1114,7 +1108,7 @@ module Hongbai
     #48.Store the Accumulator in Memory
     def sta(bytes, cycles)
       fix_address unless @address_carry.nil?
-      @m.load(@operand_addr, @a.value)
+      @m.load(@operand_addr, @a)
 
       @pc.step bytes
       @counter += cycles
@@ -1122,7 +1116,7 @@ module Hongbai
 
     #49.STX
     def stx(bytes, cycles)
-      @m.load(@operand_addr, @x.value)
+      @m.load(@operand_addr, @x)
 
       @pc.step bytes
       @counter += cycles
@@ -1130,7 +1124,7 @@ module Hongbai
 
     #50.STY
     def sty(bytes, cycles)
-      @m.load(@operand_addr, @y.value)
+      @m.load(@operand_addr, @y)
 
       @pc.step bytes
       @counter += cycles
@@ -1138,10 +1132,10 @@ module Hongbai
 
     #51.TAX
     def tax(bytes, cycles)
-      @x.load(@a.value)
+      @x = @a
 
-      set_zero(@x.value)
-      set_negative(@x.value)
+      set_zero(@x)
+      set_negative(@x)
 
       @pc.step bytes
       @counter += cycles
@@ -1149,10 +1143,10 @@ module Hongbai
 
     #52.TAY
     def tay(bytes, cycles)
-      @y.load(@a.value)
+      @y = @a
 
-      set_zero(@y.value)
-      set_negative(@y.value)
+      set_zero(@y)
+      set_negative(@y)
 
       @pc.step bytes
       @counter += cycles
@@ -1160,10 +1154,10 @@ module Hongbai
 
     #53.TSX
     def tsx(bytes, cycles)
-      @x.load(@sp.value)
+      @x = @sp.value
 
-      set_zero(@x.value)
-      set_negative(@x.value)
+      set_zero(@x)
+      set_negative(@x)
 
       @pc.step bytes
       @counter += cycles
@@ -1171,10 +1165,10 @@ module Hongbai
 
     #54.TXA
     def txa(bytes, cycles)
-      @a.load(@x.value)
+      @a = @x
 
-      set_zero(@a.value)
-      set_negative(@a.value)
+      set_zero(@a)
+      set_negative(@a)
 
       @pc.step bytes
       @counter += cycles
@@ -1182,7 +1176,7 @@ module Hongbai
 
     #55.TXS
     def txs(bytes, cycles)
-      @sp.load(@x.value)
+      @sp.load(@x)
 
       @pc.step bytes
       @counter += cycles
@@ -1190,10 +1184,10 @@ module Hongbai
 
     #56.TYA
     def tya(bytes, cycles)
-      @a.load(@y.value)
+      @a = @y
 
-      set_zero(@a.value)
-      set_negative(@a.value)
+      set_zero(@a)
+      set_negative(@a)
 
       @pc.step bytes
       @counter += cycles
