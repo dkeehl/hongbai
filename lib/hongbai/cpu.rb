@@ -199,6 +199,8 @@ module Hongbai
     end
 
     def nmi
+      @m.dummy_read(@pc.value)
+      @m.dummy_read(@pc.value)
       push(@pc.value >> 8)
       push(@pc.value & 0xff)
       push(@p.value)
@@ -210,6 +212,8 @@ module Hongbai
     def irq
       return if interrupt_disabled?
 
+      @m.dummy_read(@pc.value)
+      @m.dummy_read(@pc.value)
       push(@pc.value >> 8)
       push(@pc.value & 0xff)
       push(@p.value)
@@ -624,7 +628,7 @@ module Hongbai
         fix_address unless @address_carry.nil?
         oper = @m.read(@operand_addr)
         result = oper << 1
-        update(oper, result)
+        update(oper, result & 0xff)
       end
 
       set_carry(result)
