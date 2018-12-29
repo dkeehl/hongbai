@@ -32,6 +32,8 @@ module Hongbai
 
       def []=(n, x); @array[n] = x end
 
+      def [](n); @array[n] end
+
       alias_method :fetch, :read
       alias_method :dummy_read, :read
       attr_reader :cycle

@@ -1,12 +1,42 @@
 require 'tk'
 require 'tkextlib/tile'
-require 'bindata'
 require_relative 'cpu'
 require_relative 'assembler'
+require_relative 'dummy'
+
+class Buffer
+  def initialize(size)
+    @arr = Array.new(size)
+    @pos = 0
+    @size = size
+  end
+
+  def <<(x)
+    @arr[@pos] = x
+    @pos = (@pos + 1) % @size
+  end
+
+  def to_s
+    count = 0
+    i = @pos - 1
+    str = ""
+    while count < @size
+      str += "step #{@size - count}: #{@arr[i].to_s}\n"
+      i -= 1
+      count += 1
+    end
+    str
+  end
+
+  def reset
+    @pos = 0
+    @arr.map! {nil}
+  end
+end
 
 module Hongbai
   class TestCpu < Cpu
-    def initialize
+    def initialize(mem)
       super
       @short_addr_mode = {
         :immediate => 'IMM',
@@ -23,8 +53,13 @@ module Hongbai
         :implied => 'IMP',
         :relative => 'REL',
       }
-      @pc.load 0
+      @log = Buffer.new(20)
+      @pre_start = nil
+      @this_start = @pc.value
+      @this_end = nil
     end
+
+    attr_reader :log
 
     def reset
       @counter = 0
@@ -34,13 +69,30 @@ module Hongbai
       @p.load 0x20
       @pc.load 0
       @sp.load 0xff
-      @m.map! { 0 }
+      @m.send(:initialize)
+      @log.reset
+      @pre_start = nil
+      @this_start = @pc.value
+      @this_end = nil
+    end
+
+    def step
+      @pre_start = @this_start
+      @this_start = @pc.value
+      @log << OP_TABLE[@m[@pc.value]]
+      super
+      @this_end = @pc.value
+    end
+
+    def looping?
+      @this_end == @pre_start
     end
 
     def load_data(array, pc)
       reset
-      array.each_with_index { |n, i| @m[i] = n }
+      array.each_with_index {|n, i| @m[i] = n }
       @pc.load pc
+      @this_start = pc
     end
 
     def accumulator16
@@ -58,6 +110,10 @@ module Hongbai
     def pc16
       '%04x' % @pc.value
     end
+
+    def mem; @m end
+
+    def pc; @pc.value end
 
     def p_register_text
       flags = ['c', 'z', 'i', 'd', 'b', '-', 'v', 'n']
@@ -78,7 +134,7 @@ module Hongbai
 
     def opcode_text
       opcode = @m.fetch(@pc.value)
-      c = decode(opcode)
+      c = Hongbai::Cpu::OP_TABLE[opcode]
       "#{c[0].to_s.upcase}_#{@short_addr_mode[c[1]]}"
     end
 
@@ -89,7 +145,8 @@ module Hongbai
 end
 
 module Memviewer
-  @cpu = Hongbai::TestCpu.new
+  mem = Hongbai::Dummy::Mem.new
+  @cpu = Hongbai::TestCpu.new(mem)
   @asm = Assembler.new
 
   @root = TkRoot.new {title '6502 CPU DEBUGGER'}
@@ -143,11 +200,7 @@ module Memviewer
   statu_values.each_with_index do |l, i|
     l.anchor = 'center'
     l.grid(:row => 2, :column => i + 1)
-    if i.odd?
-      l.background = 'white'
-    else
-      l.background = '#e3e9ff'
-    end
+    l.background = i.odd? ? 'white' : '#e3e9ff'
   end
 
   ##buttons
@@ -195,9 +248,12 @@ module Memviewer
   #commands
   class << self
     def run
-      35.times do
+      loop do
         @cpu.step
+        break if @cpu.looping?
       end
+      STDERR.puts "looping at cycle #{@cpu.cycle}"
+      STDERR.puts @cpu.log.to_s
     end
 
     def run_by_step
@@ -263,12 +319,13 @@ module Memviewer
     end
   end
 
-  f = File.binread('6502_functional_test.bin').unpack('C*')
+  path = File.expand_path("../../../nes/6502_functional_test.bin", __FILE__)
+  f = File.binread(path).unpack('C*')
   pading = Array.new(10, 0xff)
   f = pading + f
   @cpu.load_data(f, 0x2b48)
 
-  #run
+  run
   refresh_data
   tag_pc
   Tk.mainloop
