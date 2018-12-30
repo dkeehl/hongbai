@@ -173,7 +173,6 @@ module Hongbai
       @pc = ProgramCounter.new
       @sp = Register.new            #Stack Pointer
       @p = StatusRegister.new
-      @counter = 0
 
       @p.load(0x34)
       @sp.load(0xfd)
@@ -188,10 +187,9 @@ module Hongbai
 
     def step
       opcode = @m.fetch(@pc.value)
-      op, addressing, bytes, cycles = *OP_TABLE[opcode]
-      send(addressing)
-      send(op, bytes, cycles)
-      #run(opcode)
+      op, addressing, _bytes, _cycles = *OP_TABLE[opcode]
+      send addressing
+      send op
     end
 
     def nmi
@@ -202,7 +200,6 @@ module Hongbai
       push(@p.value)
       @p.disable_interrupt
       @pc.load(read_u16(NMI_VECTOR))
-      @counter += 7
     end
 
     def irq
@@ -215,17 +212,12 @@ module Hongbai
       push(@p.value)
       @p.disable_interrupt
       @pc.load(read_u16(BRK_VECTOR))
-      @counter += 7
     end
 
     def read_u16(addr)
       lo = @m.read(addr)
       hi = @m.read(addr + 1)
       (hi << 8) | lo
-    end
-
-    def cycle
-      @counter
     end
 
     #########################
@@ -422,26 +414,31 @@ module Hongbai
     #########################
     def immediate
       @operand_addr = @pc.value + 1
+      @pc.step 2
     end
 
     def zero_page
       @operand_addr = @m.read(@pc.value + 1)
+      @pc.step 2
     end
 
     def zero_page_x
       base_addr = @m.read(@pc.value + 1)
-      @m.dummy_read(@pc.value + 2)
+      @pc.step 2
+      @m.dummy_read(@pc.value)
       @operand_addr = (base_addr + @x) & 0xff
     end
 
     def zero_page_y
       base_addr = @m.read(@pc.value + 1)
-      @m.dummy_read(@pc.value + 2)
+      @pc.step 2
+      @m.dummy_read(@pc.value)
       @operand_addr = (base_addr + @y) & 0xff
     end
 
     def absolute
       @operand_addr = read_u16(@pc.value + 1)
+      @pc.step 3
     end
 
     def absolute_x
@@ -449,13 +446,8 @@ module Hongbai
       hi = @m.read(@pc.value + 2) << 8
       sum = lo + @x
       @operand_addr = hi | (sum & 0xff)
-      if sum > 0xff
-        # oops, there is a carry
-        @address_carry = true
-        @counter += 1
-      else
-        @address_carry = false
-      end
+      @address_carry = sum > 0xff
+      @pc.step 3
     end
 
     def absolute_y
@@ -463,51 +455,48 @@ module Hongbai
       hi = @m.read(@pc.value + 2) << 8
       sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
-      if sum > 0xff
-        @address_carry = true
-        @counter += 1
-      else
-        @address_carry = false
-      end
+      @address_carry = sum > 0xff
+      @pc.step 3
     end
 
     def indirect
       addr_addr = read_u16(@pc.value + 1)
       @operand_addr = read_u16(addr_addr)
+      @pc.step 3
     end
 
     def indirect_x
       base_addr = @m.read(@pc.value + 1)
-      @m.dummy_read(@pc.value + 2)
+      @pc.step 2
+      @m.dummy_read(@pc.value)
       addr_addr = (base_addr + @x) & 0xff
       @operand_addr = read_u16(addr_addr)
     end
 
     def indirect_y
       addr_addr = @m.read(@pc.value + 1)
+      @pc.step 2
       lo = @m.read(addr_addr)
       hi = @m.read(addr_addr + 1) << 8
       sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
-      if sum > 0xff
-        @address_carry = true
-        @counter += 1
-      else
-        @address_carry = false
-      end
+      @address_carry = sum > 0xff
     end
 
     def accumulator
-      @m.dummy_read(@pc.value + 1)
+      @pc.step
+      @m.dummy_read(@pc.value)
       @operand_addr = nil
     end
 
     def relative
-      @operand_addr = @pc.value + 1
+      @pc.step
+      @operand_addr = @pc.value
     end
 
     def implied
-      @m.dummy_read(@pc.value + 1)
+      @pc.step
+      @m.dummy_read(@pc.value)
       @operand_addr = nil
     end
 
@@ -577,7 +566,7 @@ module Hongbai
     #########################
 
     #1.ADC
-    def adc(bytes, cycles)
+    def adc
       oper1 = read_or_fix_read
       oper2 = @a
 
@@ -596,25 +585,20 @@ module Hongbai
       set_negative(result)
 
       @a = result
-      @pc.step(bytes)
-      @counter += cycles
     end
 
     #2.AND
     # named to `und` to avoid conflict with the `and` keyword
-    def und(bytes, cycles)
+    def und
       oper = read_or_fix_read
       @a &= oper
 
       set_zero(@a)
       set_negative(@a)
-
-      @pc.step(bytes)
-      @counter += cycles
     end
 
     #3.ASL
-    def asl(bytes, cycles)
+    def asl
       if @operand_addr.nil?
         result = @a << 1
         @a = result & 0xff
@@ -628,46 +612,38 @@ module Hongbai
       set_carry(result)
       set_zero(result & 0xff)
       set_negative(result)
-
-      @pc.step(bytes)
-      @counter += cycles
     end
 
     #4.BCC
-    def select_branch(bytes, cycles, test)
+    def select_branch(test)
       oper = @m.read(@operand_addr)
+      @pc.step
       if test
         orig_pc = @pc.value
-        @m.dummy_read(@operand_addr + 1)
+        @m.dummy_read(@pc.value)
         @pc.relative_move(oper)
         if @pc.value & 0xff00 != orig_pc & 0xff00
           @m.dummy_read(@pc.value - 0x100)
-          @counter += 2
-        else
-          @counter += 1
         end
       end
-
-      @counter += cycles
-      @pc.step(bytes)
     end
 
-    def bcc(bytes, cycles)
-      select_branch(bytes, cycles, !@p.carry_flag?)
+    def bcc
+      select_branch(!@p.carry_flag?)
     end
 
     #5.BCS
-    def bcs(bytes, cycles)
-      select_branch(bytes, cycles, @p.carry_flag?)
+    def bcs
+      select_branch(@p.carry_flag?)
     end
 
     #6.BEQ
-    def beq(bytes, cycles)
-      select_branch(bytes, cycles, @p.zero_flag?)
+    def beq
+      select_branch(@p.zero_flag?)
     end
 
     #7.BIT
-    def bit(bytes, cycles)
+    def bit
       oper = @m.fetch(@operand_addr)
 
       result = @a & oper
@@ -676,117 +652,95 @@ module Hongbai
       set_zero(result)
       set_negative(oper)
       set_overflow(bit6)
-
-      @counter += cycles
-      @pc.step(bytes)
     end
 
     #8.BMI
-    def bmi(bytes, cycles)
-      select_branch(bytes, cycles, @p.negative_flag?)
+    def bmi
+      select_branch(@p.negative_flag?)
     end
 
     #9.BNE
-    def bne(bytes, cycles)
-      select_branch(bytes, cycles, !@p.zero_flag?)
+    def bne
+      select_branch(!@p.zero_flag?)
     end
 
     #10.BPL
-    def bpl(bytes, cycles)
-      select_branch(bytes, cycles, !@p.negative_flag?)
+    def bpl
+      select_branch(!@p.negative_flag?)
     end
 
     #11.BRK
-    def brk(bytes, cycles)
-      @pc.step
+    def brk
       push(@pc.value >> 8 & 0xff)
       push(@pc.value & 0xff)
       @p.set_break_commond
       push(@p.value)
       @p.disable_interrupt
       @pc.load(@m.fetch(0xfffe) | @m.fetch(0xffff) << 8)
-      @counter += cycles
     end
 
     #12.BVC
-    def bvc(bytes, cycles)
-      select_branch(bytes, cycles, !@p.overflow_flag?)
+    def bvc
+      select_branch(!@p.overflow_flag?)
     end
 
     #13.BVS
-    def bvs(bytes, cycles)
-      select_branch(bytes, cycles, @p.overflow_flag?)
+    def bvs
+      select_branch(@p.overflow_flag?)
     end
 
     #14.CLC
-    def clc(bytes, cycles)
+    def clc
       @p.clear_carry_flag
-      @pc.step bytes
-      @counter += cycles
     end
 
     #15.CLD
-    def cld(bytes, cycles)
+    def cld
       @p.unset_decimal_mode
-      @pc.step bytes
-      @counter += cycles
     end
 
     #16.CLI
-    def cli(bytes, cycles)
+    def cli
       @p.enable_interrupt
-      @pc.step bytes
-      @counter += cycles
     end
 
     #17.CLV
-    def clv(bytes, cycles)
+    def clv
       @p.clear_overflow_flag
-      @pc.step bytes
-      @counter += cycles
     end
 
     #18.CMP
-    def cmp(bytes, cycles)
+    def cmp
       oper = read_or_fix_read
       result = @a - oper
 
       set_zero(result)
       set_negative(result)
       @p.carry = result >= 0
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #19.CPX
-    def cpx(bytes, cycles)
+    def cpx
       oper = @m.fetch(@operand_addr)
       result = @x - oper
 
       set_zero(result)
       set_negative(result)
       @p.carry = result >= 0
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #20.CPY
-    def cpy(bytes, cycles)
+    def cpy
       oper = @m.fetch(@operand_addr)
       result = @y - oper
 
       set_zero(result)
       set_negative(result)
       @p.carry = result >= 0
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #21.DEC
-    def dec(bytes, cycles)
+    def dec
       fix_address unless @address_carry.nil?
       oper = @m.fetch(@operand_addr)
       result = (oper - 1) & 0xff
@@ -795,48 +749,40 @@ module Hongbai
       set_negative(result)
 
       update(oper, result)
-      @pc.step bytes
-      @counter += cycles
     end
 
     #22.DEX
-    def dex(bytes, cycles)
+    def dex
       result = (@x - 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
       @x = result
-      @pc.step bytes
-      @counter += cycles
     end
 
     #23.DEY
-    def dey(bytes, cycles)
+    def dey
       result = (@y - 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
       @y = result
-      @pc.step bytes
-      @counter += cycles
     end
 
     #24.EOR
-    def eor(bytes, cycles)
+    def eor
       oper = read_or_fix_read
       result = @a ^ oper
 
       set_zero(result)
       set_negative(result)
       @a = result
-      @pc.step bytes
-      @counter += cycles
     end
 
     #25.INC
-    def inc(bytes, cycles)
+    def inc
       fix_address unless @address_carry.nil?
       oper = @m.fetch(@operand_addr)
       result = (oper + 1) & 0xff
@@ -845,88 +791,71 @@ module Hongbai
       set_negative(result)
 
       update(oper, result)
-      @pc.step bytes
-      @counter += cycles
     end
 
     #26.INX
-    def inx(bytes, cycles)
+    def inx
       result = (@x + 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
       @x = result
-      @pc.step bytes
-      @counter += cycles
     end
 
     #27.INY
-    def iny(bytes, cycles)
+    def iny
       result = (@y + 1) & 0xff
 
       set_zero(result)
       set_negative(result)
 
       @y = result
-      @pc.step bytes
-      @counter += cycles
     end
 
     #28.JMP
-    def jmp(bytes, cycles)
+    def jmp
       @pc.load @operand_addr
-      @counter += cycles
     end
 
     #29.JSR
-    def jsr(bytes, cycles)
-      return_addr = @pc.value + 2
+    def jsr
+      return_addr = @pc.value - 1
       @m.dummy_read(@sp.value + 0x100)
       push(return_addr >> 8 & 0xff)
       push(return_addr & 0xff)
       @pc.load @operand_addr 
-      @counter += cycles
     end
 
     #30.LDA
-    def lda(bytes, cycles)
+    def lda
       oper = read_or_fix_read
 
       @a = oper
       set_zero(oper)
       set_negative(oper)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #31.LDX
-    def ldx(bytes, cycles)
+    def ldx
       oper = read_or_fix_read
 
       @x = oper
       set_zero(oper)
       set_negative(oper)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #32.LDY
-    def ldy(bytes, cycles)
+    def ldy
       oper = read_or_fix_read
 
       @y = oper
       set_zero(oper)
       set_negative(oper)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #33.Logical Shift Right
-    def lsr(bytes, cycles)
+    def lsr
       if @operand_addr.nil?
         result = @a >> 1
         @p.carry = @a & 1 == 1
@@ -941,68 +870,49 @@ module Hongbai
 
       set_zero(result)
       set_negative(result)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #34.NOP
-    def nop(bytes, cycles)
-      @pc.step bytes
-      @counter += cycles
-    end
+    def nop; nil end
 
     #35.ORA
-    def ora(bytes, cycles)
+    def ora
       oper = read_or_fix_read
       result = @a | oper
 
       set_zero(result)
       set_negative(result)
       @a = result
-      @pc.step bytes
-      @counter += cycles
     end
 
     #36.PHA
-    def pha(bytes, cycles)
+    def pha
       push @a
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #37.PHP
-    def php(bytes, cycles)
+    def php
       @p.set_break_commond
       push @p.value
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #38.PLA
-    def pla(bytes, cycles)
+    def pla
       @m.dummy_read(@sp.value + 0x100)
       @a = self.pull
 
       set_zero(@a)
       set_negative(@a)
-      @pc.step bytes
-      @counter += cycles
     end
 
     #39.PLP
-    def plp(bytes, cycles)
+    def plp
       @m.dummy_read(@sp.value + 0x100)
       @p.load(self.pull)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #40.Rotate Left
-    def rol(bytes, cycles)
+    def rol
       if @operand_addr.nil?
         result = @a << 1 | (@p.carry ? 1 : 0)
         @a = result & 0xff
@@ -1016,13 +926,10 @@ module Hongbai
       set_carry(result)
       set_zero(result & 0xff)
       set_negative(result)
-
-      @pc.step(bytes)
-      @counter += cycles
     end
 
     #41.Rotate Right
-    def ror(bytes, cycles)
+    def ror
       if @operand_addr.nil?
         result = (@p.value & 1) << 7 | @a >> 1
         @p.carry = @a & 1 == 1
@@ -1037,36 +944,29 @@ module Hongbai
 
       set_zero(result)
       set_negative(result)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #42.RTI
-    def rti(bytes, cycles)
+    def rti
       @m.dummy_read(@sp.value + 0x100)
       @p.load(self.pull)
       addr_low = self.pull
       addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
-
-      @counter += cycles
     end
 
     #43.RTS
-    def rts(bytes, cycles)
+    def rts
       @m.dummy_read(@sp.value + 0x100)
       addr_low = self.pull
       addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
       @m.dummy_read(@pc.value)
       @pc.step
-
-      @counter += cycles
     end
 
     #44.Subtract with Carry
-    def sbc(bytes, cycles)
+    def sbc
       oper1 = @a
       oper2 = read_or_fix_read
 
@@ -1080,117 +980,82 @@ module Hongbai
                     (oper1 & 0x80 != result & 0x80)
 
       @a = result & 0xff
-      @pc.step bytes
-      @counter += cycles
     end
 
     #45.SEC
-    def sec(bytes, cycles)
+    def sec
       @p.set_carry_flag
-      @pc.step bytes
-      @counter += cycles
     end
 
     #46.SED
-    def sed(bytes, cycles)
+    def sed
       @p.set_decimal_mode
-      @pc.step bytes
-      @counter += cycles
     end
 
     #47.SEI
-    def sei(bytes, cycles)
+    def sei
       @p.disable_interrupt
-      @pc.step bytes
-      @counter += cycles
     end
 
     #48.Store the Accumulator in Memory
-    def sta(bytes, cycles)
+    def sta
       fix_address unless @address_carry.nil?
       @m.load(@operand_addr, @a)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #49.STX
-    def stx(bytes, cycles)
+    def stx
       @m.load(@operand_addr, @x)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #50.STY
-    def sty(bytes, cycles)
+    def sty
       @m.load(@operand_addr, @y)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #51.TAX
-    def tax(bytes, cycles)
+    def tax
       @x = @a
 
       set_zero(@x)
       set_negative(@x)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #52.TAY
-    def tay(bytes, cycles)
+    def tay
       @y = @a
 
       set_zero(@y)
       set_negative(@y)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #53.TSX
-    def tsx(bytes, cycles)
+    def tsx
       @x = @sp.value
 
       set_zero(@x)
       set_negative(@x)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #54.TXA
-    def txa(bytes, cycles)
+    def txa
       @a = @x
 
       set_zero(@a)
       set_negative(@a)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #55.TXS
-    def txs(bytes, cycles)
+    def txs
       @sp.load(@x)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     #56.TYA
-    def tya(bytes, cycles)
+    def tya
       @a = @y
 
       set_zero(@a)
       set_negative(@a)
-
-      @pc.step bytes
-      @counter += cycles
     end
 
     def self.unknown_op
@@ -1200,8 +1065,8 @@ module Hongbai
     # generate a method call from the array returned from `decode`
     # args: [method, address_mode, bytes, cycles]
     def self.send_args(args)
-      method, _, bytes, cy = *args
-      "#{method}(#{bytes}, #{cy})"
+      method, _, _bytes, _cy = *args
+      "#{method}"
     end
 
     def self.static_method_call
