@@ -62,10 +62,9 @@ module Hongbai
     attr_reader :log
 
     def reset
-      @counter = 0
-      @a.load 0
-      @x.load 0
-      @y.load 0
+      @a = 0
+      @x = 0
+      @y = 0
       @p.load 0x20
       @pc.load 0
       @sp.load 0xff
@@ -96,22 +95,20 @@ module Hongbai
     end
 
     def accumulator16
-      '%02x' % @a.value
+      '%02x' % @a
     end
 
     def x_register16
-      '%02x' % @x.value
+      '%02x' % @x
     end
 
     def y_register16
-      '%02x' % @y.value
+      '%02x' % @y
     end
 
     def pc16
       '%04x' % @pc.value
     end
-
-    def mem; @m end
 
     def pc; @pc.value end
 
@@ -145,8 +142,8 @@ module Hongbai
 end
 
 module Memviewer
-  mem = Hongbai::Dummy::Mem.new
-  @cpu = Hongbai::TestCpu.new(mem)
+  @mem = Hongbai::Dummy::Mem.new
+  @cpu = Hongbai::TestCpu.new(@mem)
   @asm = Assembler.new
 
   @root = TkRoot.new {title '6502 CPU DEBUGGER'}
@@ -252,13 +249,13 @@ module Memviewer
         @cpu.step
         break if @cpu.looping?
       end
-      STDERR.puts "looping at cycle #{@cpu.cycle}"
+      STDERR.puts "looping at cycle #{@mem.cycle}"
       STDERR.puts @cpu.log.to_s
     end
 
     def run_by_step
       clear_pc_tag
-      @cpu.excute_cycle
+      @cpu.step
       refresh_data
       tag_pc
     end
@@ -274,7 +271,7 @@ module Memviewer
     end
 
     def refresh_data
-      @cycle.value = @cpu.cycle
+      @cycle.value = @mem.cycle
       @a.value = @cpu.accumulator16
       @x.value = @cpu.x_register16
       @y.value = @cpu.y_register16
@@ -309,7 +306,7 @@ module Memviewer
     end
 
     def refresh_m
-      @m.each_with_index { |v, i| v.value = '%02x' % @cpu.mem[@page * 256 + i] }
+      @m.each_with_index { |v, i| v.value = '%02x' % @mem[@page * 256 + i] }
     end
 
     def change_first_column
