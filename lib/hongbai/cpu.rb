@@ -1,30 +1,4 @@
 module Hongbai
-  class ProgramCounter
-    def initialize
-      @value = 0
-    end
-
-    def step(n = 1)
-      @value += n
-    end
-
-    def value
-      @value
-    end
-
-    def load(n)
-      @value = n
-    end
-
-    def relative_move(n)
-      if n > 127
-        @value = @value - 256 + n
-      else
-        @value += n
-      end
-    end
-  end
-
   class StatusRegister
     def initialize
       @carry = false
@@ -75,8 +49,8 @@ module Hongbai
       @sp = 0xfd #Stack Pointer
       @p = StatusRegister.new
       @p.load(0x34)
-      @pc = ProgramCounter.new
-      @pc.load(read_u16(RESET_VECTOR))
+      @pc = read_u16(RESET_VECTOR)
+      @m.reset
 
       @operand_addr = nil
       @address_carry = nil
@@ -86,32 +60,32 @@ module Hongbai
     attr_accessor :trace
 
     def step
-      opcode = @m.fetch(@pc.value)
+      opcode = @m.fetch(@pc)
       op, addressing, _bytes, _cycles = *OP_TABLE[opcode]
       send addressing
       send op
     end
 
     def nmi
-      @m.dummy_read(@pc.value)
-      @m.dummy_read(@pc.value)
-      push(@pc.value >> 8)
-      push(@pc.value & 0xff)
+      @m.dummy_read @pc
+      @m.dummy_read @pc
+      push(@pc >> 8)
+      push(@pc & 0xff)
       push(@p.value)
-      @p.disable_interrupt
-      @pc.load(read_u16(NMI_VECTOR))
+      @p.disable_interrupt = true
+      @pc = read_u16(NMI_VECTOR)
     end
 
     def irq
       return if interrupt_disabled?
 
-      @m.dummy_read(@pc.value)
-      @m.dummy_read(@pc.value)
-      push(@pc.value >> 8)
-      push(@pc.value & 0xff)
+      @m.dummy_read @pc
+      @m.dummy_read @pc
+      push(@pc >> 8)
+      push(@pc & 0xff)
       push(@p.value)
-      @p.disable_interrupt
-      @pc.load(read_u16(BRK_VECTOR))
+      @p.disable_interrupt = true
+      @pc = read_u16(BRK_VECTOR)
     end
 
     def read_u16(addr)
@@ -313,69 +287,69 @@ module Hongbai
     #ADDRESSING
     #########################
     def immediate
-      @operand_addr = @pc.value + 1
-      @pc.step 2
+      @operand_addr = @pc + 1
+      @pc += 2
     end
 
     def zero_page
-      @operand_addr = @m.read(@pc.value + 1)
-      @pc.step 2
+      @operand_addr = @m.read(@pc + 1)
+      @pc += 2
     end
 
     def zero_page_x
-      base_addr = @m.read(@pc.value + 1)
-      @pc.step 2
-      @m.dummy_read(@pc.value)
+      base_addr = @m.read(@pc + 1)
+      @pc += 2
+      @m.dummy_read(@pc)
       @operand_addr = (base_addr + @x) & 0xff
     end
 
     def zero_page_y
-      base_addr = @m.read(@pc.value + 1)
-      @pc.step 2
-      @m.dummy_read(@pc.value)
+      base_addr = @m.read(@pc + 1)
+      @pc += 2
+      @m.dummy_read(@pc)
       @operand_addr = (base_addr + @y) & 0xff
     end
 
     def absolute
-      @operand_addr = read_u16(@pc.value + 1)
-      @pc.step 3
+      @operand_addr = read_u16(@pc + 1)
+      @pc += 3
     end
 
     def absolute_x
-      lo = @m.read(@pc.value + 1)
-      hi = @m.read(@pc.value + 2) << 8
+      lo = @m.read(@pc + 1)
+      hi = @m.read(@pc + 2) << 8
       sum = lo + @x
       @operand_addr = hi | (sum & 0xff)
       @address_carry = sum > 0xff
-      @pc.step 3
+      @pc += 3
     end
 
     def absolute_y
-      lo = @m.read(@pc.value + 1)
-      hi = @m.read(@pc.value + 2) << 8
+      lo = @m.read(@pc + 1)
+      hi = @m.read(@pc + 2) << 8
       sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
       @address_carry = sum > 0xff
-      @pc.step 3
+      @pc += 3
     end
 
     def indirect
-      addr_addr = read_u16(@pc.value + 1)
+      addr_addr = read_u16(@pc + 1)
       @operand_addr = read_u16(addr_addr)
-      @pc.step 3
+      @pc += 3
     end
 
     def indirect_x
-      base_addr = @m.read(@pc.value + 1)
-      @pc.step 2
-      @m.dummy_read(@pc.value)
+      base_addr = @m.read(@pc + 1)
+      @pc += 2
+      @m.dummy_read(@pc)
       addr_addr = (base_addr + @x) & 0xff
       @operand_addr = read_u16(addr_addr)
     end
 
     def indirect_y
-      addr_addr = @m.read(@pc.value + 1)
-      @pc.step 2
+      addr_addr = @m.read(@pc + 1)
+      @pc += 2
       lo = @m.read(addr_addr)
       hi = @m.read(addr_addr + 1) << 8
       sum = lo + @y
@@ -384,19 +358,19 @@ module Hongbai
     end
 
     def accumulator
-      @pc.step
-      @m.dummy_read(@pc.value)
+      @pc += 1
+      @m.dummy_read(@pc)
       @operand_addr = nil
     end
 
     def relative
-      @pc.step
-      @operand_addr = @pc.value
+      @pc += 1
+      @operand_addr = @pc
     end
 
     def implied
-      @pc.step
-      @m.dummy_read(@pc.value)
+      @pc += 1
+      @m.dummy_read(@pc)
       @operand_addr = nil
     end
 
@@ -521,13 +495,13 @@ module Hongbai
     #4.BCC
     def select_branch(test)
       oper = @m.read(@operand_addr)
-      @pc.step
+      @pc += 1
       if test
-        orig_pc = @pc.value
-        @m.dummy_read(@pc.value)
-        @pc.relative_move(oper)
-        if @pc.value & 0xff00 != orig_pc & 0xff00
-          @m.dummy_read(@pc.value - 0x100)
+        orig_pc = @pc
+        @m.dummy_read @pc
+        @pc += oper > 127 ? oper - 256 : oper
+        if @pc & 0xff00 != orig_pc & 0xff00
+          @m.dummy_read(@pc - 0x100)
         end
       end
     end
@@ -575,12 +549,12 @@ module Hongbai
 
     #11.BRK
     def brk
-      push(@pc.value >> 8 & 0xff)
-      push(@pc.value & 0xff)
+      push(@pc >> 8 & 0xff)
+      push(@pc & 0xff)
       @p.break = true
       push(@p.value)
       @p.disable_interrupt = true
-      @pc.load(@m.fetch(0xfffe) | @m.fetch(0xffff) << 8)
+      @pc = read_u16(BRK_VECTOR)
     end
 
     #12.BVC
@@ -719,16 +693,16 @@ module Hongbai
 
     #28.JMP
     def jmp
-      @pc.load @operand_addr
+      @pc = @operand_addr
     end
 
     #29.JSR
     def jsr
-      return_addr = @pc.value - 1
+      return_addr = @pc - 1
       stack_dummy_read
       push(return_addr >> 8 & 0xff)
       push(return_addr & 0xff)
-      @pc.load @operand_addr 
+      @pc = @operand_addr 
     end
 
     #30.LDA
@@ -856,7 +830,7 @@ module Hongbai
       @p.load(self.pull)
       addr_low = self.pull
       addr_high = self.pull
-      @pc.load(addr_high << 8 | addr_low)
+      @pc = addr_high << 8 | addr_low
     end
 
     #43.RTS
@@ -864,9 +838,9 @@ module Hongbai
       stack_dummy_read
       addr_low = self.pull
       addr_high = self.pull
-      @pc.load(addr_high << 8 | addr_low)
-      @m.dummy_read(@pc.value)
-      @pc.step
+      @pc = addr_high << 8 | addr_low
+      @m.dummy_read(@pc)
+      @pc += 1
     end
 
     #44.Subtract with Carry
