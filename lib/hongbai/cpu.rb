@@ -52,7 +52,8 @@ module Hongbai
       @negative = false
     end
 
-    attr_accessor :carry, :zero, :overflow, :negative
+    attr_accessor :carry, :zero, :overflow, :negative, :break,
+      :disable_interrupt, :decimal_mode
 
     def value
       bit0 = @carry ? 0b0000_0001 : 0
@@ -73,90 +74,6 @@ module Hongbai
       @break = n[4] == 1
       @overflow = n[6] == 1
       @negative = n[7] == 1
-    end
-
-    def carry_flag?
-      @carry
-    end
-
-    def set_carry_flag
-      @carry = true
-    end
-
-    def clear_carry_flag
-      @carry = false
-    end
-
-    def zero_flag?
-      @zero
-    end
-
-    def set_zero_flag
-      @zero = true
-    end
-
-    def clear_zero_flag
-      @zero = false
-    end
-
-    def interrupt_disabled?
-      @disable_interrupt
-    end
-
-    def disable_interrupt
-      @disable_interrupt = true
-    end
-    
-    def enable_interrupt
-      @disable_interrupt = false
-    end
-
-    def decimal_mode?
-      @decimal_mode
-    end
-
-    def set_decimal_mode
-      @decimal_mode = true
-    end
-
-    def unset_decimal_mode
-      @decimal_mode = false
-    end
-
-    def break_commond?
-      @break
-    end
-
-    def set_break_commond
-      @break = true
-    end
-
-    def unset_break_commond
-      @break = false
-    end
-
-    def overflow_flag?
-      @overflow
-    end
-
-    def set_overflow_flag
-      @overflow = true
-    end
-
-    def clear_overflow_flag
-      @overflow = false
-    end
-
-    def negative_flag?
-      @negative
-    end
-
-    def set_negative_flag
-      @negative = true
-    end
-
-    def clear_negative_flag
-      @negative = false
     end
   end
 
@@ -570,7 +487,7 @@ module Hongbai
       oper1 = read_or_fix_read
       oper2 = @a
 
-      result = if @p.carry_flag?
+      result = if @p.carry
                  oper1 + oper2 + 1
                else
                  oper1 + oper2
@@ -629,17 +546,17 @@ module Hongbai
     end
 
     def bcc
-      select_branch(!@p.carry_flag?)
+      select_branch(!@p.carry)
     end
 
     #5.BCS
     def bcs
-      select_branch(@p.carry_flag?)
+      select_branch(@p.carry)
     end
 
     #6.BEQ
     def beq
-      select_branch(@p.zero_flag?)
+      select_branch(@p.zero)
     end
 
     #7.BIT
@@ -656,57 +573,57 @@ module Hongbai
 
     #8.BMI
     def bmi
-      select_branch(@p.negative_flag?)
+      select_branch(@p.negative)
     end
 
     #9.BNE
     def bne
-      select_branch(!@p.zero_flag?)
+      select_branch(!@p.zero)
     end
 
     #10.BPL
     def bpl
-      select_branch(!@p.negative_flag?)
+      select_branch(!@p.negative)
     end
 
     #11.BRK
     def brk
       push(@pc.value >> 8 & 0xff)
       push(@pc.value & 0xff)
-      @p.set_break_commond
+      @p.break = true
       push(@p.value)
-      @p.disable_interrupt
+      @p.disable_interrupt = true
       @pc.load(@m.fetch(0xfffe) | @m.fetch(0xffff) << 8)
     end
 
     #12.BVC
     def bvc
-      select_branch(!@p.overflow_flag?)
+      select_branch(!@p.overflow)
     end
 
     #13.BVS
     def bvs
-      select_branch(@p.overflow_flag?)
+      select_branch(@p.overflow)
     end
 
     #14.CLC
     def clc
-      @p.clear_carry_flag
+      @p.carry = false
     end
 
     #15.CLD
     def cld
-      @p.unset_decimal_mode
+      @p.decimal_mode = false
     end
 
     #16.CLI
     def cli
-      @p.enable_interrupt
+      @p.disable_interrupt = false
     end
 
     #17.CLV
     def clv
-      @p.clear_overflow_flag
+      @p.overflow = false
     end
 
     #18.CMP
@@ -892,7 +809,7 @@ module Hongbai
 
     #37.PHP
     def php
-      @p.set_break_commond
+      @p.break = true
       push @p.value
     end
 
@@ -970,7 +887,7 @@ module Hongbai
       oper1 = @a
       oper2 = read_or_fix_read
 
-      result = oper1 + (oper2 ^ 0xff) + (@p.carry_flag? ? 1 : 0)
+      result = oper1 + (oper2 ^ 0xff) + (@p.carry ? 1 : 0)
 
       set_carry(result)
       set_zero(result & 0xff)
@@ -984,17 +901,17 @@ module Hongbai
 
     #45.SEC
     def sec
-      @p.set_carry_flag
+      @p.carry = true
     end
 
     #46.SED
     def sed
-      @p.set_decimal_mode
+      @p.decimal_mode = true
     end
 
     #47.SEI
     def sei
-      @p.disable_interrupt
+      @p.disable_interrupt = true
     end
 
     #48.Store the Accumulator in Memory
