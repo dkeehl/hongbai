@@ -399,16 +399,9 @@ module Hongbai
       @p.carry = result > 0xff
     end
 
-    def set_zero(result)
+    def set_zero_and_negative(result)
       @p.zero = result.zero?
-    end
-
-    def set_negative(result)
-      @p.negative = result & 0x80 == 0x80
-    end
-
-    def set_overflow(bit)
-      @p.overflow = bit == 1
+      @p.negative = result[7] == 1
     end
 
     #########################
@@ -447,20 +440,14 @@ module Hongbai
     def adc
       oper1 = read_or_fix_read
       oper2 = @a
-
-      result = if @p.carry
-                 oper1 + oper2 + 1
-               else
-                 oper1 + oper2
-               end
+      result = @p.carry ?  oper1 + oper2 + 1 : oper1 + oper2
 
       @p.overflow = (oper1 & 0x80 == oper2 & 0x80) &&
                     (oper1 & 0x80 != result & 0x80)
 
       set_carry(result)
       result &= 0xff
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
 
       @a = result
     end
@@ -470,9 +457,7 @@ module Hongbai
     def und
       oper = read_or_fix_read
       @a &= oper
-
-      set_zero(@a)
-      set_negative(@a)
+      set_zero_and_negative @a
     end
 
     #3.ASL
@@ -488,8 +473,7 @@ module Hongbai
       end
 
       set_carry(result)
-      set_zero(result & 0xff)
-      set_negative(result)
+      set_zero_and_negative(result & 0xff)
     end
 
     #4.BCC
@@ -523,13 +507,11 @@ module Hongbai
     #7.BIT
     def bit
       oper = @m.fetch(@operand_addr)
-
       result = @a & oper
-      bit6 = oper >> 6 & 1
 
-      set_zero(result)
-      set_negative(oper)
-      set_overflow(bit6)
+      @p.overflow = oper[6] == 1
+      @p.negative = oper[7] == 1
+      @p.zero = result.zero?
     end
 
     #8.BMI
@@ -591,9 +573,7 @@ module Hongbai
     def cmp
       oper = read_or_fix_read
       result = @a - oper
-
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
       @p.carry = result >= 0
     end
 
@@ -601,9 +581,7 @@ module Hongbai
     def cpx
       oper = @m.fetch(@operand_addr)
       result = @x - oper
-
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
       @p.carry = result >= 0
     end
 
@@ -611,9 +589,7 @@ module Hongbai
     def cpy
       oper = @m.fetch(@operand_addr)
       result = @y - oper
-
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
       @p.carry = result >= 0
     end
 
@@ -622,30 +598,21 @@ module Hongbai
       fix_address unless @address_carry.nil?
       oper = @m.fetch(@operand_addr)
       result = (oper - 1) & 0xff
-
-      set_zero(result)
-      set_negative(result)
-
+      set_zero_and_negative(result)
       update(oper, result)
     end
 
     #22.DEX
     def dex
       result = (@x - 1) & 0xff
-
-      set_zero(result)
-      set_negative(result)
-
+      set_zero_and_negative(result)
       @x = result
     end
 
     #23.DEY
     def dey
       result = (@y - 1) & 0xff
-
-      set_zero(result)
-      set_negative(result)
-
+      set_zero_and_negative(result)
       @y = result
     end
 
@@ -653,9 +620,7 @@ module Hongbai
     def eor
       oper = read_or_fix_read
       result = @a ^ oper
-
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
       @a = result
     end
 
@@ -664,31 +629,20 @@ module Hongbai
       fix_address unless @address_carry.nil?
       oper = @m.fetch(@operand_addr)
       result = (oper + 1) & 0xff
-
-      set_zero(result)
-      set_negative(result)
-
+      set_zero_and_negative(result)
       update(oper, result)
     end
 
     #26.INX
     def inx
-      result = (@x + 1) & 0xff
-
-      set_zero(result)
-      set_negative(result)
-
-      @x = result
+      @x = (@x + 1) & 0xff
+      set_zero_and_negative @x
     end
 
     #27.INY
     def iny
-      result = (@y + 1) & 0xff
-
-      set_zero(result)
-      set_negative(result)
-
-      @y = result
+      @y = (@y + 1) & 0xff
+      set_zero_and_negative @y
     end
 
     #28.JMP
@@ -707,29 +661,20 @@ module Hongbai
 
     #30.LDA
     def lda
-      oper = read_or_fix_read
-
-      @a = oper
-      set_zero(oper)
-      set_negative(oper)
+      @a = read_or_fix_read
+      set_zero_and_negative @a
     end
 
     #31.LDX
     def ldx
-      oper = read_or_fix_read
-
-      @x = oper
-      set_zero(oper)
-      set_negative(oper)
+      @x = read_or_fix_read
+      set_zero_and_negative @x
     end
 
     #32.LDY
     def ldy
-      oper = read_or_fix_read
-
-      @y = oper
-      set_zero(oper)
-      set_negative(oper)
+      @y = read_or_fix_read
+      set_zero_and_negative @y
     end
 
     #33.Logical Shift Right
@@ -746,8 +691,7 @@ module Hongbai
         update(oper, result)
       end
 
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
     end
 
     #34.NOP
@@ -756,11 +700,8 @@ module Hongbai
     #35.ORA
     def ora
       oper = read_or_fix_read
-      result = @a | oper
-
-      set_zero(result)
-      set_negative(result)
-      @a = result
+      @a |= oper
+      set_zero_and_negative @a
     end
 
     #36.PHA
@@ -778,9 +719,7 @@ module Hongbai
     def pla
       stack_dummy_read
       @a = self.pull
-
-      set_zero(@a)
-      set_negative(@a)
+      set_zero_and_negative @a
     end
 
     #39.PLP
@@ -802,8 +741,7 @@ module Hongbai
       end
 
       set_carry(result)
-      set_zero(result & 0xff)
-      set_negative(result)
+      set_zero_and_negative(result & 0xff)
     end
 
     #41.Rotate Right
@@ -820,8 +758,7 @@ module Hongbai
         update(data, result)
       end
 
-      set_zero(result)
-      set_negative(result)
+      set_zero_and_negative(result)
     end
 
     #42.RTI
@@ -851,8 +788,7 @@ module Hongbai
       result = oper1 + (oper2 ^ 0xff) + (@p.carry ? 1 : 0)
 
       set_carry(result)
-      set_zero(result & 0xff)
-      set_negative(result & 0xff)
+      set_zero_and_negative(result & 0xff)
 
       @p.overflow = (oper1 & 0x80 != oper2 & 0x80) &&
                     (oper1 & 0x80 != result & 0x80)
@@ -894,33 +830,25 @@ module Hongbai
     #51.TAX
     def tax
       @x = @a
-
-      set_zero(@x)
-      set_negative(@x)
+      set_zero_and_negative(@x)
     end
 
     #52.TAY
     def tay
       @y = @a
-
-      set_zero(@y)
-      set_negative(@y)
+      set_zero_and_negative(@y)
     end
 
     #53.TSX
     def tsx
       @x = @sp
-
-      set_zero(@x)
-      set_negative(@x)
+      set_zero_and_negative(@x)
     end
 
     #54.TXA
     def txa
       @a = @x
-
-      set_zero(@a)
-      set_negative(@a)
+      set_zero_and_negative(@a)
     end
 
     #55.TXS
@@ -931,26 +859,17 @@ module Hongbai
     #56.TYA
     def tya
       @a = @y
-
-      set_zero(@a)
-      set_negative(@a)
+      set_zero_and_negative(@a)
     end
 
     def self.unknown_op
       "raise \"Unkown op code \#{op}\""
     end
 
-    # generate a method call from the array returned from `decode`
-    # args: [method, address_mode, bytes, cycles]
-    def self.send_args(args)
-      method, _, _bytes, _cy = *args
-      "#{method}"
-    end
-
     def self.static_method_call
       defination = "case op\n"
       OP_TABLE.each do |i, c|
-        defination += "when #{i} then #{send_args(c)}\n"
+        defination += "when #{i} then #{c[0]}\n"
       end
       defination += "else #{unknown_op} end"
     end
