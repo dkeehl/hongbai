@@ -1,34 +1,19 @@
 module Hongbai
-  class Register
+  class ProgramCounter
     def initialize
       @value = 0
     end
 
-    def add(n)
+    def step(n = 1)
       @value += n
-      mask_off
     end
 
     def value
       @value
     end
 
-    def mask_off
-      @value &= 0xff
-    end
-
     def load(n)
       @value = n
-    end
-  end
-
-  class ProgramCounter < Register
-    def mask_off
-      @value &= 0xffff
-    end
-
-    def step(n = 1)
-      @value += n
     end
 
     def relative_move(n)
@@ -87,12 +72,10 @@ module Hongbai
       @a = 0 #Accumulator Register
       @x = 0 #Index Register X
       @y = 0 #Index Register Y
-      @pc = ProgramCounter.new
-      @sp = Register.new            #Stack Pointer
+      @sp = 0xfd #Stack Pointer
       @p = StatusRegister.new
-
       @p.load(0x34)
-      @sp.load(0xfd)
+      @pc = ProgramCounter.new
       @pc.load(read_u16(RESET_VECTOR))
 
       @operand_addr = nil
@@ -468,14 +451,18 @@ module Hongbai
     def push(data)
       #descending stack starts the stack pointer at the end of the array
       #decreases on a push, inreases it on a pull
-      @m.load(@sp.value + 0x100, data)
-      @sp.add(-1)
+      @m.load(@sp + 0x100, data)
+      @sp -= 1
     end
 
     def pull
       #empty stack, SP moves before pull
-      @sp.add 1
-      @m.fetch(@sp.value + 0x100)   
+      @sp += 1
+      @m.fetch(@sp + 0x100)   
+    end
+
+    def stack_dummy_read
+      @m.dummy_read(@sp + 0x100)
     end
 
     #########################
@@ -738,7 +725,7 @@ module Hongbai
     #29.JSR
     def jsr
       return_addr = @pc.value - 1
-      @m.dummy_read(@sp.value + 0x100)
+      stack_dummy_read
       push(return_addr >> 8 & 0xff)
       push(return_addr & 0xff)
       @pc.load @operand_addr 
@@ -815,7 +802,7 @@ module Hongbai
 
     #38.PLA
     def pla
-      @m.dummy_read(@sp.value + 0x100)
+      stack_dummy_read
       @a = self.pull
 
       set_zero(@a)
@@ -824,7 +811,7 @@ module Hongbai
 
     #39.PLP
     def plp
-      @m.dummy_read(@sp.value + 0x100)
+      stack_dummy_read
       @p.load(self.pull)
     end
 
@@ -865,7 +852,7 @@ module Hongbai
 
     #42.RTI
     def rti
-      @m.dummy_read(@sp.value + 0x100)
+      stack_dummy_read
       @p.load(self.pull)
       addr_low = self.pull
       addr_high = self.pull
@@ -874,7 +861,7 @@ module Hongbai
 
     #43.RTS
     def rts
-      @m.dummy_read(@sp.value + 0x100)
+      stack_dummy_read
       addr_low = self.pull
       addr_high = self.pull
       @pc.load(addr_high << 8 | addr_low)
@@ -948,7 +935,7 @@ module Hongbai
 
     #53.TSX
     def tsx
-      @x = @sp.value
+      @x = @sp
 
       set_zero(@x)
       set_negative(@x)
@@ -964,7 +951,7 @@ module Hongbai
 
     #55.TXS
     def txs
-      @sp.load(@x)
+      @sp = @x
     end
 
     #56.TYA

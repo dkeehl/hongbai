@@ -67,7 +67,7 @@ module Hongbai
       @y = 0
       @p.load 0x20
       @pc.load 0
-      @sp.load 0xff
+      @sp = 0xff
       @m.send(:initialize)
       @log.reset
       @pre_start = nil
@@ -126,7 +126,7 @@ module Hongbai
     end
 
     def stack_pointer16
-      '%02x' % @sp.value
+      '%02x' % @sp
     end
 
     def opcode_text
