@@ -55,7 +55,7 @@ module Hongbai
       }
       @log = Buffer.new(20)
       @pre_start = nil
-      @this_start = @pc.value
+      @this_start = @pc
       @this_end = nil
     end
 
@@ -66,21 +66,21 @@ module Hongbai
       @x = 0
       @y = 0
       @p.load 0x20
-      @pc.load 0
+      @pc = 0
       @sp = 0xff
       @m.send(:initialize)
       @log.reset
       @pre_start = nil
-      @this_start = @pc.value
+      @this_start = @pc
       @this_end = nil
     end
 
     def step
       @pre_start = @this_start
-      @this_start = @pc.value
-      @log << OP_TABLE[@m[@pc.value]]
+      @this_start = @pc
+      @log << OP_TABLE[@m[@pc]]
       super
-      @this_end = @pc.value
+      @this_end = @pc
     end
 
     def looping?
@@ -90,7 +90,7 @@ module Hongbai
     def load_data(array, pc)
       reset
       array.each_with_index {|n, i| @m[i] = n }
-      @pc.load pc
+      @pc = pc
       @this_start = pc
     end
 
@@ -107,10 +107,10 @@ module Hongbai
     end
 
     def pc16
-      '%04x' % @pc.value
+      '%04x' % @pc
     end
 
-    def pc; @pc.value end
+    def pc; @pc end
 
     def p_register_text
       flags = ['c', 'z', 'i', 'd', 'b', '-', 'v', 'n']
@@ -130,7 +130,7 @@ module Hongbai
     end
 
     def opcode_text
-      opcode = @m.fetch(@pc.value)
+      opcode = @m.fetch(@pc)
       c = Hongbai::Cpu::OP_TABLE[opcode]
       "#{c[0].to_s.upcase}_#{@short_addr_mode[c[1]]}"
     end
