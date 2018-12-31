@@ -1,3 +1,5 @@
+require_relative 'filter'
+
 module Hongbai
   class Apu
     OUTPUT_SAMPLE_RATE = 44.1 # kHz
@@ -38,7 +40,7 @@ module Hongbai
 
     SEQUENCERS = [MODE_0, MODE_1]
 
-    def initialize(filter)
+    def initialize
       # channels
       @pulse_1 = Pulse.new
       @pulse_2 = Pulse.new(true)
@@ -62,7 +64,7 @@ module Hongbai
       @val_4017 = nil
 
       # For resampling
-      @filter = filter
+      @filter = Filter.new
       @sampling_counter = 0.0
       @decimation_counter = 0
     end
@@ -77,8 +79,8 @@ module Hongbai
 
     def step
       clock_channels
-      clock_output
       clock_frame_counter
+      clock_output
       @cycle += 1
     end
 
@@ -116,6 +118,10 @@ module Hongbai
 
     def irq?
       @frame_interrupt || @dmc.interrupt
+    end
+
+    def flush
+      @buffer.clear
     end
 
     private
