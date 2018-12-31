@@ -77,7 +77,7 @@ module Hongbai
     end
 
     def irq
-      return if interrupt_disabled?
+      return if @p.disable_interrupt
 
       @m.dummy_read @pc
       @m.dummy_read @pc

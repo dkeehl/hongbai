@@ -1,92 +1,157 @@
 module Hongbai
   class Memory
-    def initialize(ppu, rom, input)
+    def initialize(apu, ppu, rom, input)
+      @apu = apu
       @ppu = ppu
       @rom = rom
       @input = input
       @ram = Array.new(0x800, 0)
 
+      @read_map = Array.new(0x10000)
+      @write_map = Array.new(0x10000)
+
       @dma_triggered = nil
 
       @cycle = 0
       @trace = false
+
+      init_memory_map
     end
 
     attr_accessor :dma_triggered, :trace
     attr_reader :cycle
 
-    # Memory map
-    # $0000 - $07ff 2KB internal RAM
-    # $0800 - $0fff
-    # $1000 - $17ff
-    # $1800 - $1fff 3 mirrors of $0000 - $07fff
-    # $2000 - $2007 PPU registers
-    # $2008 - $3fff mirrors of $2000 - $2007
-    # $4000 - $4017 APU and IO registers
-    # $4018 - $401f normally disabled APU and IO functionality
-    # $4020 - $ffff cartridge space
+    def reset
+      @cycle = 0
+      # FIXME: should also reset apu
+    end
+
     def read(addr)
+      do_oam_dma(addr) if @dma_triggered
       on_cpu_cycle
-      do_oma_dmc(addr) if @dma_triggered
-      if addr < 0x2000
-        @ram[addr & 0x7ff]
-      elsif addr < 0x4000
-        @ppu.load(addr)
-      elsif addr == 0x4014
-        # dma
-        #https://forums.nesdev.com/viewtopic.php?f=3&t=14120
-        0x40
-      elsif addr == 0x4015
-        # TODO APU
-        0
-      elsif addr == 0x4016
-        0x40 ^ @input.read_4016
-      elsif addr == 0x4017
-        0x40 ^ @input.read_4017
-      elsif addr < 0x4020
-        0
-      else
-        @rom.prg_load(addr)
-      end
+      @read_map[addr][addr]
     end
 
     def load(addr, val)
       on_cpu_cycle
-      if addr < 0x2000
-        @ram[addr & 0x7ff] = val
-      elsif addr < 0x4000
-        @ppu.store(addr, val)
-      elsif addr == 0x4014
-        @dma_triggered = val
-      elsif addr == 0x4016
-        @input.store(val)
-      elsif addr < 0x4018
-        nil
-        # TODO: "Unimplemented APU register"
-      elsif addr < 0x4020
-        nil
-      else
-        @rom.prg_store(addr, val)
-      end
-    end
-
-    def do_oma_dmc(addr)
-      start = @dma_triggered << 8
-      @dma_triggered = nil
-      dummy_read addr
-      dummy_read addr if @cycle.odd?
-      256.times do |i|
-        val = read(start + i)
-        on_cpu_cycle
-        @ppu.write_oam_data(val)
-      end
+      @write_map[addr][addr, val]
     end
 
     alias_method :fetch, :read
     alias_method :dummy_read, :read
 
-    def on_cpu_cycle
-      @cycle += 1
-    end
+    private
+      def trigger_oam_dma(_addr, val)
+        @dma_triggered = val
+      end
+
+      def do_oam_dma(addr)
+        start = @dma_triggered << 8
+        @dma_triggered = nil
+        dummy_read addr # halt cycle
+        dummy_read addr if @cycle.odd? # align cycle
+        256.times do |i|
+          val = read(start + i)
+          on_cpu_cycle
+          @ppu.write_oam_data(0x2004, val)
+        end
+      end
+
+      def on_cpu_cycle
+        @cycle += 1
+        @apu.step
+      end
+
+      def read_mirror_ram(addr)
+        @ram[addr & 0x7ff]
+      end
+
+      def write_mirror_ram(addr, val)
+        @ram[addr & 0x7ff] = val
+      end
+
+      def nop_read(addr)
+        addr >> 8
+      end
+
+      def nop_write(_addr, _val); end
+
+      def add_mapping(addr, read, write)
+        @read_map[addr] = read
+        @write_map[addr] = write
+      end
+
+      def init_memory_map
+        # Memory map
+        # $0000 - $07ff 2KB internal RAM
+        (0..0x7ff).each do |i|
+          add_mapping(i, @ram, @ram.method(:[]=))
+        end
+        # $0800 - $0fff
+        # $1000 - $17ff
+        # $1800 - $1fff 3 mirrors of $0000 - $07fff
+        (0x800..0x1fff).each do |i|
+          add_mapping(i, method(:read_mirror_ram), method(:write_mirror_ram))
+        end
+        # $2000 - $2007 PPU registers
+        # $2008 - $3fff mirrors of $2000 - $2007
+        (0x2000..0x3fff).each do |i|
+          @read_map[i] =
+            case i % 8
+            when 0 then @ppu.method(:read_ppu_ctrl)
+            when 1 then @ppu.method(:read_ppu_mask)
+            when 2 then @ppu.method(:read_ppu_status)
+            when 4 then @ppu.method(:read_oam_data)
+            when 7 then @ppu.method(:read_ppu_data)
+            else method(:nop_read)
+            end
+          @write_map[i] =
+            case i % 8
+            when 0 then @ppu.method(:write_ppu_ctrl)
+            when 1 then @ppu.method(:write_ppu_mask)
+            when 2 then method(:nop_write)
+            when 3 then @ppu.method(:write_oam_addr)
+            when 4 then @ppu.method(:write_oam_data)
+            when 5 then @ppu.method(:write_ppu_scroll)
+            when 6 then @ppu.method(:write_ppu_addr)
+            when 7 then @ppu.method(:write_ppu_data)
+            end
+        end
+        # $4000 - $4017 APU and IO registers
+        # $4018 - $401f normally disabled APU and IO functionality
+        (0x4000..0x4003).each do |i|
+          add_mapping(
+            i, method(:nop_read), @apu.pulse_1.method(:"write_#{i - 0x4000}"))
+        end
+        (0x4004..0x4007).each do |i|
+          add_mapping(
+            i, method(:nop_read), @apu.pulse_2.method(:"write_#{i - 0x4004}"))
+        end
+        [0x4008, 0x400a, 0x400b].each do |i|
+          add_mapping(
+            i, method(:nop_read), @apu.triangle.method(:"write_#{i - 0x4008}"))
+        end
+        [0x400c, 0x400e, 0x400f].each do |i|
+          add_mapping(
+            i, method(:nop_read), @apu.noise.method(:"write_#{i - 0x400c}"))
+        end
+        (0x4010..0x4013).each do |i|
+          add_mapping(
+            i, method(:nop_read), @apu.dmc.method(:"write_#{i - 0x4010}"))
+        end
+
+        add_mapping(0x4014, method(:nop_read), method(:trigger_oam_dma))
+        add_mapping(0x4015, @apu.method(:read_4015), @apu.method(:write_4015))
+        add_mapping(0x4016, @input.method(:read_4016), @input.method(:write_4016))
+        add_mapping(0x4017, @input.method(:read_4017), @apu.method(:write_4017))
+
+        ([0x4009, 0x400d] + (0x4018..0x401f).to_a).each do |i|
+          add_mapping(i, method(:nop_read), method(:nop_write))
+        end
+        # $4020 - $ffff cartridge space
+        (0x4020..0xffff).each do |i|
+          add_mapping(i, @rom.method(:prg_read), @rom.method(:prg_write))
+        end
+      end
   end
 end

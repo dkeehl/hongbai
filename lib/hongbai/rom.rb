@@ -125,12 +125,12 @@ module Hongbai
 
     def next_scanline_irq; false end
 
-    def prg_load(addr)
+    def prg_read(addr)
       addr < 0x8000 ? 0 : @prg_rom[addr & @prg_addr_mask]
     end
 
     # Read only
-    def prg_store(_addr, _val); end
+    def prg_write(_addr, _val); end
 
     def chr_load(addr)
       @chr_rom[addr]

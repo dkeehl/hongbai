@@ -77,17 +77,17 @@ module Hongbai
     end
 
     # Read from $4016
-    def read_4016
-      @device.read
+    def read_4016(_addr)
+      0x40 | @device.read
     end
 
     # Read from $4017
-    def read_4017
-      0
+    def read_4017(_addr)
+      0x40
     end
 
     # Only accepts writing to $4016
-    def store(val)
+    def write_4016(_addr, val)
       @out = val & 7
       @device.write(@out)
     end

@@ -1,6 +1,7 @@
 require_relative 'sdl/sdl2'
 require_relative './cpu'
 require_relative './ppu'
+require_relative './apu'
 require_relative './rom'
 require_relative './mem'
 require_relative './input'
@@ -19,17 +20,19 @@ module Hongbai
         controller = Controller.new(map)
         input = Input.new(controller)
 
+        apu = Apu.new
         ppu = Ppu.new(rom, win)
-        mem = Memory.new(ppu, rom, input)
+        mem = Memory.new(apu, ppu, rom, input)
         cpu = Cpu.new(mem)
-        nes = new(cpu, ppu, mem, input)
+        nes = new(cpu, ppu, apu, mem, input)
         loop { nes.step }
       end
     end
 
-    def initialize(cpu, ppu, mem, input)
+    def initialize(cpu, ppu, apu, mem, input)
       @cpu = cpu
       @ppu = ppu
+      @apu = apu
       @mem = mem
       @input = input
 
@@ -44,9 +47,11 @@ module Hongbai
       vblank_nmi, scanline_irq, new_frame = @ppu.step(@mem.cycle)
 
       @cpu.nmi if vblank_nmi
-      @cpu.irq if scanline_irq
-      @input.poll if new_frame
+      @cpu.irq if scanline_irq || @apu.irq?
+      if new_frame
+        @input.poll
+        @apu.flush
+      end
     end
-
   end
 end

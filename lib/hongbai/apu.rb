@@ -84,7 +84,7 @@ module Hongbai
       @cycle += 1
     end
 
-    def read_4015
+    def read_4015(_addr)
       p1 = @pulse_1 .length_counter.count > 0 ? 0b0000_0001 : 0
       p2 = @pulse_2 .length_counter.count > 0 ? 0b0000_0010 : 0
       t  = @triangle.length_counter.count > 0 ? 0b0000_0100 : 0
@@ -100,7 +100,7 @@ module Hongbai
       p1 + p2 + t + n + d + f + i
     end
 
-    def write_4015(val)
+    def write_4015(_addr, val)
       @pulse_1 .enable = val[0] == 1
       @pulse_2 .enable = val[1] == 1
       @triangle.enable = val[2] == 1
@@ -110,7 +110,7 @@ module Hongbai
       @dmc.clear_interrupt
     end
 
-    def write_4017(val)
+    def write_4017(_addr, val)
       @val_4017 = val
       @interrupt_inhibit = val[6] == 1
       @frame_interrupt = false if @interrupt_inhibit 
@@ -154,7 +154,7 @@ module Hongbai
       def clock_frame_counter
         @cycles_until_next_step -= 1
         if @cycles_until_next_step.zero?
-          this_step = @sequence[@step]
+          this_step = @sequencer[@step]
           if this_step.clk_sweep_units
             @pulse_1.clock_sweep_unit
             @pulse_2.clock_sweep_unit
@@ -177,7 +177,7 @@ module Hongbai
           @frame_interrupt = true if this_step.clk_irq && !@interrupt_inhibit
 
           @step = this_step.next_step
-          @cycles_until_next_step = @sequence[@step].cycles
+          @cycles_until_next_step = @sequencer[@step].cycles
         end
 
         if @val_4017
@@ -205,6 +205,7 @@ module Hongbai
       @sweep_increase = -1 # A mask. -1 when sweep increases, 0 when sweep decreases.
       @sweep_period = 0
       @sweep_shift = 0
+      @sweep_counter = 0
       # doesn't change once initialized
       @complement = pulse_2 ? 0 : -1
 
@@ -223,13 +224,13 @@ module Hongbai
       @length_counter.count = 0 if !@enabled
     end
 
-    def write_0(val)
+    def write_0(_addr, val)
       @envelope.write(val)
       @length_counter.halt = val[5] == 1
       @form = WAVE_FORM[(val >> 6) & 3]
     end
 
-    def write_1(val)
+    def write_1(_addr, val)
       @sweep_reload = true
       @sweep_enabled = val[7] == 1
       @sweep_period = (val >> 4) & 7
@@ -238,11 +239,11 @@ module Hongbai
       @sweep_shift = val & 7
     end
 
-    def write_2(val)
+    def write_2(_addr, val)
       @wave_length = (@wave_length & 0x700) | (val & 0xff)
     end
 
-    def write_3(val)
+    def write_3(_addr, val)
       @wave_length = (@wave_length & 0xff) | ((val & 0x7) << 8)
       @length_counter.write val
       @envelope.restart
@@ -256,7 +257,7 @@ module Hongbai
     end
 
     def audible?
-      @enabled && valid_period? && @envelope.output.nonzero? && @length_counter.count.nonzero?
+      @enabled && valid_period? && @envelope.volume.nonzero? && @length_counter.count.nonzero?
     end
 
     def clock
@@ -275,7 +276,7 @@ module Hongbai
     end
 
     def clock_sweep_unit
-      if @sweep_counter.zero? && @sweep_enabled && valid_period?
+      if @sweep_enabled && @sweep_counter.zero? && valid_period? && @sweep_shift.nonzero?
         # adjust wave length
         if @sweep_negate
           @wave_length += @complement - (@wave_length >> @sweep_shift)
@@ -401,16 +402,16 @@ module Hongbai
       @length_counter.count = 0 if !@enabled
     end
 
-    def write_0(val)
+    def write_0(_addr, val)
       @length_counter.halt = @control = val[7] == 1
       @counter_reload_value = val & 0x7f
     end
 
-    def write_2(val)
+    def write_2(_addr, val)
       @period = (@period & 0x700) | val
     end
 
-    def write_3(val)
+    def write_3(_addr, val)
       @period = (@period & 0xff) | ((val & 7) << 8)
       @length_counter.write val
       @linear_counter_reload = true
@@ -470,17 +471,17 @@ module Hongbai
       @length_counter.count = 0 if !@enabled
     end
 
-    def write_0(val)
+    def write_0(_addr, val)
       @envelope.write val
       @length_counter.halt = val[5]
     end
 
-    def write_2(val)
+    def write_2(_addr, val)
       @mode = val[7] == 1
       @period = PERIODS[val & 0xf]
     end
 
-    def write_3(val)
+    def write_3(_addr, val)
       @length_counter.write val
       @envelope.restart
     end
@@ -555,22 +556,22 @@ module Hongbai
       end
     end
 
-    def write_0(val)
+    def write_0(_addr, val)
       @enable_interrupt = val[7] == 1
       @interrupt = false if !@enable_interrupt
       @loop = val[6] == 1
       @rate = RATE_TABLE[val & 0xf]
     end
 
-    def write_1(val)
+    def write_1(_addr, val)
       @output = val & 0x7f
     end
 
-    def write_2(val)
+    def write_2(_addr, val)
       @sample_address = 0xc000 + val * 64
     end
 
-    def write_3(val)
+    def write_3(_addr, val)
       @sample_length = val * 16 + 1
     end
 
