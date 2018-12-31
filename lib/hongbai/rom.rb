@@ -120,13 +120,15 @@ module Hongbai
   # Mapper 0
   module Nrom
     def mapper_init
-      @prg_addr_mask = @prg_rom.length > 16384 ? 0x7fff : 0x3fff
+      @prg_data = Array.new(0x10000, 0)
+      prg_addr_mask = @prg_rom.length > 16384 ? 0x7fff : 0x3fff
+      (0x8000..0xffff).each {|i| @prg_data[i] = @prg_rom[i & prg_addr_mask] }
     end
 
     def next_scanline_irq; false end
 
     def prg_read(addr)
-      addr < 0x8000 ? 0 : @prg_rom[addr & @prg_addr_mask]
+      @prg_data[addr]
     end
 
     # Read only
@@ -138,5 +140,13 @@ module Hongbai
 
     # Read only
     def chr_store(_addr, _val); end
+
+    def prg_read_method
+      @prg_data
+    end
+
+    def prg_write_method
+      method :prg_write
+    end
   end
 end
