@@ -77,93 +77,81 @@ module Hongbai
       return vblank_nmi, scanline_irq, new_frame
     end
 
-    # Take a Cpu memory space address, return the corresponding register value
-    def load(addr)
-      case addr & 7
-      when 0 then @regs.ppu_ctrl
-      when 1 then @regs.ppu_mask
-      when 2 then read_ppu_status
-      when 3 then 0 # write only
-      when 4 then @oam[@regs.oam_addr]
-      when 5 then 0 # write only
-      when 6 then 0 # write only
-      when 7 then read_ppu_data
-      else raise "Unreachable case"
-      end
+    def read_ppu_ctrl(_addr)
+      @regs.ppu_ctrl
     end
 
-    # Take a Cpu memory space address, update a register
-    def store(addr, val)
-      case addr & 7
-      when 0 then @regs.ppu_ctrl = val
-      when 1 then @regs.ppu_mask = val
-      when 2 then nil # read only
-      when 3 then @regs.oam_addr = val
-      when 4 then write_oam_data(val)
-      when 5 then update_ppu_scroll(val)
-      when 6 then update_ppu_addr(val)
-      when 7 then write_ppu_data(val)
-      else raise "Unreachable case"
-      end
+    def read_ppu_mask(_addr)
+      @regs.ppu_mask
     end
 
-    # Ppu -> Integer -> Nil
+    def read_oam_data(_addr)
+      @oam[@regs.oam_addr]
+    end
+
+    def read_ppu_status(_addr)
+      @regs.reset_toggle
+      @regs.ppu_status
+    end
+
+    def read_ppu_data(_addr)
+      # Mirror down addresses greater than 0x3fff
+      addr = @regs.ppu_addr & 0x3fff
+      val = @vram.load(addr)
+      @regs.ppu_addr += @regs.vram_addr_increment
+      buffered = @regs.ppu_data_read_buffer
+      @regs.ppu_data_read_buffer = val
+
+      addr < 0x3f00 ? buffered : val
+    end
+
+    def write_ppu_ctrl(_addr, val)
+      @regs.ppu_ctrl = val
+    end
+
+    def write_ppu_mask(_addr, val)
+      @regs.ppu_mask = val
+    end
+
+    def write_oam_addr(_addr, val)
+      @regs.oam_addr = val
+    end
+
     # Public for OAM DMA
-    def write_oam_data(val)
+    def write_oam_data(_addr, val)
       @oam[@regs.oam_addr] = val
       @regs.oam_addr = (@regs.oam_addr + 1) & 0xff
     end
 
+    def write_ppu_scroll(_addr, val)
+      if @regs.toggle? # toggle is true, the second write
+        @scroll_y = val
+      else
+        @scroll_x = val
+      end
+      @regs.toggle!
+    end
+
+    def write_ppu_addr(_addr, val)
+      if @regs.toggle?
+        @regs.ppu_addr = @regs.ppu_addr & 0xff00 | val
+      else
+        @regs.ppu_addr = @regs.ppu_addr & 0x00ff | (val << 8)
+        # This is a hack
+        nametable = (@regs.ppu_addr >> 10) & 3
+        @regs.ppu_ctrl = @regs.ppu_ctrl & (0xfc | nametable)
+      end
+      @regs.toggle!
+    end
+
+    def write_ppu_data(_addr, val)
+      # Mirror down addresses greater than 0x3fff
+      addr = @regs.ppu_addr & 0x3fff
+      @vram.store(addr, val)
+      @regs.ppu_addr += @regs.vram_addr_increment
+    end
+
     private
-      # Ppu -> Integer
-      def read_ppu_status
-        @regs.reset_toggle
-        @regs.ppu_status
-      end
-
-      # Ppu -> Integer -> Nil
-      def update_ppu_scroll(val)
-        if @regs.toggle? # toggle is true, the second write
-          @scroll_y = val
-        else
-          @scroll_x = val
-        end
-        @regs.toggle!
-      end
-
-      # Ppu -> Integer -> Nil
-      def update_ppu_addr(val)
-        if @regs.toggle?
-          @regs.ppu_addr = @regs.ppu_addr & 0xff00 | val
-        else
-          @regs.ppu_addr = @regs.ppu_addr & 0x00ff | (val << 8)
-          # This is a hack
-          nametable = (@regs.ppu_addr >> 10) & 3
-          @regs.ppu_ctrl = @regs.ppu_ctrl & (0xfc | nametable)
-        end
-        @regs.toggle!
-      end
-
-      # Ppu -> Integer
-      def read_ppu_data
-        # Mirror down addresses greater than 0x3fff
-        addr = @regs.ppu_addr & 0x3fff
-        val = @vram.load(addr)
-        @regs.ppu_addr += @regs.vram_addr_increment
-        buffered = @regs.ppu_data_read_buffer
-        @regs.ppu_data_read_buffer = val
-
-        addr < 0x3f00 ? buffered : val
-      end
-
-      # Ppu -> Integer -> Nil
-      def write_ppu_data(val)
-        # Mirror down addresses greater than 0x3fff
-        addr = @regs.ppu_addr & 0x3fff
-        @vram.store(addr, val)
-        @regs.ppu_addr += @regs.vram_addr_increment
-      end
-
       # Ppu -> Integer -> Integer -> Tile
       # A Tile is a 8*8 Matrix of Color
       def build_tile(row, col)

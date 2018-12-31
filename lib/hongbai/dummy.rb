@@ -30,6 +30,10 @@ module Hongbai
         @array[n] = x
       end
 
+      def reset
+        @cycle = 0
+      end
+
       def []=(n, x); @array[n] = x end
 
       def [](n); @array[n] end
