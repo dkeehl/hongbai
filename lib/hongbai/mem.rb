@@ -10,7 +10,7 @@ module Hongbai
       @read_map = Array.new(0x10000)
       @write_map = Array.new(0x10000)
 
-      @dma_triggered = nil
+      @oam_dma_triggered = nil
 
       @cycle = 0
       @trace = false
@@ -18,7 +18,7 @@ module Hongbai
       init_memory_map
     end
 
-    attr_accessor :dma_triggered, :trace
+    attr_accessor :trace
     attr_reader :cycle
 
     def reset
@@ -27,7 +27,8 @@ module Hongbai
     end
 
     def read(addr)
-      do_oam_dma(addr) if @dma_triggered
+      do_dmc_dma(addr) if @apu.dmc.should_activate_dma?
+      do_oam_dma(addr) if @oam_dma_triggered
       on_cpu_cycle
       @read_map[addr][addr]
     end
@@ -42,18 +43,36 @@ module Hongbai
 
     private
       def trigger_oam_dma(_addr, val)
-        @dma_triggered = val
+        @oam_dma_triggered = val
+      end
+
+      def dma_read(addr)
+        on_cpu_cycle
+        @read_map[addr][addr]
+      end
+
+      def do_dmc_dma(addr)
+        dma_read addr # halt
+        dma_read addr # extra dmc dummy_read
+        dma_read addr if @cycle.odd?
+        val = dma_read(@apu.dmc.current_address)
+        @apu.dmc.dma_write val
       end
 
       def do_oam_dma(addr)
-        start = @dma_triggered << 8
-        @dma_triggered = nil
-        dummy_read addr # halt cycle
-        dummy_read addr if @cycle.odd? # align cycle
+        start = @oam_dma_triggered << 8
+        @oam_dma_triggered = nil
+        dma_read addr # halt cycle
+        dma_read addr if @cycle.odd? # align cycle
         256.times do |i|
-          val = read(start + i)
+          val = dma_read(start + i)
           on_cpu_cycle
           @ppu.write_oam_data(0x2004, val)
+          if @apu.dmc.should_activate_dma?
+            val = dma_read(@apu.dmc.current_address)
+            @apu.dmc.dma_write val
+            dma_read addr
+          end
         end
       end
 

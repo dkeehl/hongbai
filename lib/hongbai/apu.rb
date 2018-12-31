@@ -89,7 +89,7 @@ module Hongbai
       p2 = @pulse_2 .length_counter.count > 0 ? 0b0000_0010 : 0
       t  = @triangle.length_counter.count > 0 ? 0b0000_0100 : 0
       n  = @noise   .length_counter.count > 0 ? 0b0000_1000 : 0
-      d  = @dmc.bits_remaining > 0 ? 0b0001_0000 : 0
+      d  = @dmc.bytes_remaining > 0 ? 0b0001_0000 : 0
       f  = @frame_interrupt        ? 0b0100_0000 : 0
       i  = @dmc.interrupt          ? 0b1000_0000 : 0
 
@@ -544,7 +544,7 @@ module Hongbai
       @silence = true
     end
 
-    attr_reader :interrupt, :bits_remaining
+    attr_reader :interrupt, :bytes_remaining, :current_address
 
     def enable=(b)
       @enabled = b
@@ -596,7 +596,7 @@ module Hongbai
     end
 
     def should_activate_dma?
-      @sample_buffer.nil? && @bits_remaining.nonzero?
+      @sample_buffer.nil? && @bytes_remaining.nonzero?
     end
 
     def dma_write(val)
