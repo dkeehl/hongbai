@@ -17,33 +17,31 @@ module Hongbai
                       :clk_linear_counter,
                       :clk_envelopes)
     MODE_0 = [
-      Step.new(   1, 1, false, false, false, false, false),
-      Step.new(   1, 2, false, false, false, false, false),
-      Step.new(   1, 3, false, false, false, false, false),
-      Step.new(7457, 4, false, false, false, true,  true ),
-      Step.new(7456, 5, false, true,  true,  true,  true ),
-      Step.new(7458, 6, false, false, false, true,  true ),
-      Step.new(7457, 7, true,  false, false, false, false),
-      Step.new(   1, 8, true,  true,  true,  true,  true ),
-      Step.new(   1, 3, true,  false, false, false, false),
+      Step.new(   1, 1, false, false, false, false, false), #0
+      Step.new(   2, 2, false, false, false, false, false), #1
+      Step.new(7457, 3, false, false, false, true,  true ), #2
+      Step.new(7456, 4, false, true,  true,  true,  true ), #3
+      Step.new(7458, 5, false, false, false, true,  true ), #4
+      Step.new(7457, 6, true,  false, false, false, false), #5
+      Step.new(   1, 7, true,  true,  true,  true,  true ), #6
+      Step.new(   1, 2, true,  false, false, false, false), #7
     ]
     MODE_1 = [
-      Step.new(   1, 1, false, false, false, false, false),
-      Step.new(   3, 2, false, true,  true,  true,  true ),
-      Step.new(7456, 5, false, false, false, true,  true ),
-      Step.new(7458, 4, false, true,  true,  true,  true ),
-      Step.new(7458, 5, false, false, false, true,  true ),
-      Step.new(7456, 6, false, true,  true,  true,  true ),
-      Step.new(7458, 7, false, false, false, true,  true ),
-      Step.new(7452, 3, false, false, false, false, false),
+      Step.new(   1, 1, false, false, false, false, false), #0
+      Step.new(   1, 2, false, true,  true,  true,  true ), #1
+      Step.new(7458, 3, false, false, false, true,  true ), #2
+      Step.new(7456, 4, false, true,  true,  true,  true ), #3
+      Step.new(7458, 5, false, false, false, true,  true ), #4
+      Step.new(7456, 6, false, false, false, false, false), #5
+      Step.new(7454, 2, false, true,  true,  true,  true ), #6
     ]
 
     SEQUENCERS = [MODE_0, MODE_1]
 
     def initialize
       # channels
-      @pulse_1 = Pulse.new
-      @pulse_2 = Pulse.new(true)
+      @pulse_1 = Pulse.new(self)
+      @pulse_2 = Pulse.new(self, true)
       @triangle = Triangle.new
       @noise = Noise.new
       @dmc = Dmc.new
@@ -69,7 +67,8 @@ module Hongbai
       @decimation_counter = 0
     end
 
-    attr_reader :pulse_1, :pulse_2, :triangle, :noise, :dmc, :frame_interrupt
+    attr_reader :pulse_1, :pulse_2, :triangle, :noise, :dmc, :frame_interrupt,
+      :cycle
 
     def run
       # one step per cpu cycle
@@ -101,19 +100,22 @@ module Hongbai
     end
 
     def write_4015(_addr, val)
-      @pulse_1 .enable = val[0] == 1
-      @pulse_2 .enable = val[1] == 1
-      @triangle.enable = val[2] == 1
-      @noise   .enable = val[3] == 1
+      @pulse_1 .length_counter.enable = val[0] == 1
+      @pulse_2 .length_counter.enable = val[1] == 1
+      @triangle.length_counter.enable = val[2] == 1
+      @noise   .length_counter.enable = val[3] == 1
       @dmc     .enable = val[4] == 1
 
       @dmc.clear_interrupt
     end
 
     def write_4017(_addr, val)
-      @val_4017 = val
       @interrupt_inhibit = val[6] == 1
       @frame_interrupt = false if @interrupt_inhibit 
+
+      @sequencer = SEQUENCERS[val[7]]
+      @step = @cycle.odd? ? 0 : 1
+      @cycles_until_next_step = @sequencer[@step].cycles
     end
 
     def irq?
@@ -122,6 +124,10 @@ module Hongbai
 
     def flush
       @buffer.clear
+    end
+
+    def save_file
+      #File.binwrite("sound", @buffer.pack("e*"))
     end
 
     private
@@ -155,6 +161,7 @@ module Hongbai
         @cycles_until_next_step -= 1
         if @cycles_until_next_step.zero?
           this_step = @sequencer[@step]
+
           if this_step.clk_sweep_units
             @pulse_1.clock_sweep_unit
             @pulse_2.clock_sweep_unit
@@ -179,13 +186,6 @@ module Hongbai
           @step = this_step.next_step
           @cycles_until_next_step = @sequencer[@step].cycles
         end
-
-        if @val_4017
-          @sequence = SEQUENCERS[@val_4017[7]]
-          @step = @cycle.even? ? 0 : 1
-          @cycles_until_next_step = @sequence[@step].cycles
-          @val_4017 = nil
-        end
       end
   end
 
@@ -196,8 +196,8 @@ module Hongbai
       (0..7).map {|i| n[7 - i] }
     end
 
-    def initialize(pulse_2 = false)
-      @enabled = false
+    def initialize(apu, pulse_2 = false)
+      @apu = apu
       # Sweep unit
       @sweep_reload = false
       @sweep_enabled = false
@@ -219,10 +219,7 @@ module Hongbai
       @length_counter = LengthCounter.new
     end
 
-    def enable=(b)
-      @enabled = b
-      @length_counter.count = 0 if !@enabled
-    end
+    attr_accessor :length_counter
 
     def write_0(_addr, val)
       @envelope.write(val)
@@ -257,7 +254,7 @@ module Hongbai
     end
 
     def audible?
-      @enabled && valid_period? && @envelope.volume.nonzero? && @length_counter.count.nonzero?
+      valid_period? && @envelope.volume.nonzero? && @length_counter.count.nonzero?
     end
 
     def clock
@@ -363,8 +360,12 @@ module Hongbai
       @halt = false
     end
 
-    attr_accessor :count
-    attr_writer :halt
+    attr_accessor :count, :halt
+
+    def enable=(b)
+      @enabled = b
+      @count = 0 if !@enabled
+    end
 
     def write(val)
       @count = LENGTH_TABLE[val >> 3] if @enabled
@@ -382,8 +383,6 @@ module Hongbai
     ]
 
     def initialize
-      @enabled = false
-
       @period = 0 # In fact this is the period minus 1
       @timer = 0
       @step = 0
@@ -397,10 +396,7 @@ module Hongbai
       @length_counter = LengthCounter.new
     end
 
-    def enable=(b)
-      @enabled = b
-      @length_counter.count = 0 if !@enabled
-    end
+    attr_accessor :length_counter
 
     def write_0(_addr, val)
       @length_counter.halt = @control = val[7] == 1
@@ -442,7 +438,7 @@ module Hongbai
     end
 
     def silenced?
-      !@enabled || @linear_counter.zero? || @length_counter.count.zero? || @period < 2
+      @linear_counter.zero? || @length_counter.count.zero? || @period < 2
     end
 
     def sample
@@ -454,8 +450,6 @@ module Hongbai
     PERIODS = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068]
     
     def initialize
-      @enabled = false
-
       @timer = 0
       @period = PERIODS[0]
       # Feedback shift register
@@ -466,14 +460,11 @@ module Hongbai
       @length_counter = LengthCounter.new
     end
 
-    def enable=(b)
-      @enabled = b
-      @length_counter.count = 0 if !@enabled
-    end
+    attr_accessor :length_counter
 
     def write_0(_addr, val)
       @envelope.write val
-      @length_counter.halt = val[5]
+      @length_counter.halt = val[5] == 1
     end
 
     def write_2(_addr, val)
@@ -506,7 +497,7 @@ module Hongbai
     end
 
     def silenced?
-      !@enabled || @shift[0] == 1 || @length_counter.count.zero?
+      @shift[0] == 1 || @length_counter.count.zero?
     end
 
     def sample
