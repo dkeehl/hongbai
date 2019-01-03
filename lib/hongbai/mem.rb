@@ -29,8 +29,9 @@ module Hongbai
     def read(addr)
       do_dmc_dma(addr) if @apu.dmc.should_activate_dma?
       do_oam_dma(addr) if @oam_dma_triggered
+      ret = @read_map[addr][addr]
       on_cpu_cycle
-      @read_map[addr][addr]
+      ret
     end
 
     def load(addr, val)
@@ -41,14 +42,26 @@ module Hongbai
     alias_method :fetch, :read
     alias_method :dummy_read, :read
 
+    def dump
+      (0x6000..0x6003).each do |i|
+        puts "%02x" % @rom.prg_read(i)
+      end
+
+      buf = []
+      i = 0x6004
+      while (x = @rom.prg_read(i)).nonzero?; buf << x; i += 1 end
+      puts buf.pack("C*")
+    end
+
     private
       def trigger_oam_dma(_addr, val)
         @oam_dma_triggered = val
       end
 
       def dma_read(addr)
+        ret = @read_map[addr][addr]
         on_cpu_cycle
-        @read_map[addr][addr]
+        ret
       end
 
       def do_dmc_dma(addr)
