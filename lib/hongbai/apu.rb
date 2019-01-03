@@ -123,11 +123,11 @@ module Hongbai
     end
 
     def flush
-      @buffer.clear
+      #@buffer.clear
     end
 
     def save_file
-      #File.binwrite("sound", @buffer.pack("e*"))
+      File.binwrite("sound", @buffer.pack("e*"))
     end
 
     private

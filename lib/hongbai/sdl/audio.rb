@@ -18,13 +18,13 @@ module Hongbai
 
     AUDIO_S8 = 0x8008
     AUDIO_S16LSB = 0x8010
+    AUDIO_F32LSB = 0x8120
 
     class Audio
-      FORMAT = { 8 => AUDIO_S8, 16 => AUDIO_S16LSB }
-      PACK = { 8 => "c*", 16 => "v*" }
+      FORMAT = { 8 => AUDIO_S8, 16 => AUDIO_S16LSB, 32 => AUDIO_F32LSB }
+      PACK = { 8 => "c*", 16 => "v*", 32 => "e*" }
 
       def initialize(sample_rate = 44100, bit_depth = 16, channels = 1)
-        raise "Bit depth must be 8 or 16" unless bit_depth == 8 || bit_depth == 16
         @sample_rate = sample_rate
         @bit_depth = bit_depth
         @channels = channels
