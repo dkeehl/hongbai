@@ -1,4 +1,4 @@
-require_relative 'filter'
+require_relative './filter'
 
 module Hongbai
   class Apu
@@ -302,7 +302,7 @@ module Hongbai
   class Envelope
     def initialize
       @counter = 0
-      # @envelope_parameter is used as 1. the volume in constand volume,
+      # @envelope_parameter is used as 1. the volume in constant volume,
       # and 2. the reload value for the counter
       @envelope_parameter = @decay_level = 0
       # flags
@@ -571,14 +571,13 @@ module Hongbai
     end
 
     def clock
+      @timer -= 1
       if @timer.zero?
         @timer = @rate
         update_output unless @silence
         @shift >> 1
         @bits_remaining -= 1
         new_cycle if @bits_remaining.zero?
-      else
-        @timer -= 1
       end
     end
 
