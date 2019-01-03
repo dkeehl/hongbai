@@ -132,7 +132,9 @@ module Hongbai
     end
 
     # Read only
-    def prg_write(_addr, _val); end
+    def prg_write(addr, val)
+      @prg_data[addr] = val if addr < 0x8000
+    end
 
     def chr_load(addr)
       @chr_rom[addr]

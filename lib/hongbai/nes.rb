@@ -25,7 +25,11 @@ module Hongbai
         mem = Memory.new(apu, ppu, rom, input)
         cpu = Cpu.new(mem)
         nes = new(cpu, ppu, apu, mem, input)
-        loop { nes.step }
+        begin
+          loop { nes.step }
+        ensure
+          apu.save_file
+        end
       end
     end
 

@@ -50,22 +50,37 @@ module Hongbai
   end
 
   module TestAudio
-    SDL2.Init(SDL2::INIT_AUDIO)
-    path = File.expand_path("../../../nes/piano.wav", __FILE__)
-    #path = File.expand_path("../../../nes/audio.wav", __FILE__)
-    #puts Wav.load(path)
-    Wav.load(path) do |meta, f|
-      if meta[:format] != 1
-        puts "Compressed WAV is not supported"
-        abort
-      end
+    def test_wav
+      SDL2.Init(SDL2::INIT_AUDIO)
+      path = File.expand_path("../../../nes/piano.wav", __FILE__)
+      #path = File.expand_path("../../../nes/audio.wav", __FILE__)
+      #puts Wav.load(path)
+      Wav.load(path) do |meta, f|
+        if meta[:format] != 1
+          puts "Compressed WAV is not supported"
+          abort
+        end
 
-      a = SDL2::Audio.new(meta[:sample_rate], meta[:bit_per_sample], meta[:channels])
-      interval = 1 # in seconds
-      chunk_size = meta[:data_rate] * interval
-      while data = f.read(chunk_size); a.play(data) end
-      a.flush
-      a.close
+        a = SDL2::Audio.new(meta[:sample_rate], meta[:bit_per_sample], meta[:channels])
+        interval = 1 # in seconds
+        chunk_size = meta[:data_rate] * interval
+        while data = f.read(chunk_size); a.play(data) end
+        a.flush
+        a.close
+      end
     end
+
+    def self.test_f32
+      SDL2.Init(SDL2::INIT_AUDIO)
+      a = SDL2::Audio.new(44100, 32, 1)
+      chunk_size = 44100 * 4
+      File.open("sound") do |f|
+        while data = f.read(chunk_size); a.play(data) end
+        a.flush
+        a.close
+      end
+    end
+
+    test_f32
   end
 end
