@@ -33,9 +33,10 @@ module Hongbai
       win = Dummy::Window.new
       input = Dummy::Input.new
       ppu = Ppu.new(rom, win)
-      mem = Memory.new(ppu, rom, input)
+      apu = Apu.new
+      mem = Memory.new(apu, ppu, rom, input)
       cpu = Cpu.new(mem)
-      new(cpu, ppu, mem, input)
+      new(cpu, ppu, apu, mem, input)
     end
   end
 
