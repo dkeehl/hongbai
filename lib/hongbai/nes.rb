@@ -28,7 +28,7 @@ module Hongbai
         begin
           loop { nes.step }
         ensure
-          apu.save_file
+          mem.dump
         end
       end
     end

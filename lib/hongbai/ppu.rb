@@ -21,6 +21,7 @@ module Hongbai
     def initialize(rom, win)
       @renderer = win.create_renderer(-1, 0)
       @vram = Vram.new(rom)
+      @rom = rom
       @next_scanline_cycle = CYCLES_PER_SCANLINE
       @scanline = 0
       @frame = 0
@@ -58,7 +59,7 @@ module Hongbai
 
         @scanline += 1
 
-        scanline_irq = @vram.rom.next_scanline_irq
+        scanline_irq = @rom.next_scanline_irq
 
         if @scanline == VBLANK_SCANLINE
           set_vblank_start
@@ -97,7 +98,7 @@ module Hongbai
     def read_ppu_data(_addr)
       # Mirror down addresses greater than 0x3fff
       addr = @regs.ppu_addr & 0x3fff
-      val = @vram.load(addr)
+      val = @vram.read(addr)
       @regs.ppu_addr += @regs.vram_addr_increment
       buffered = @regs.ppu_data_read_buffer
       @regs.ppu_data_read_buffer = val
@@ -147,7 +148,7 @@ module Hongbai
     def write_ppu_data(_addr, val)
       # Mirror down addresses greater than 0x3fff
       addr = @regs.ppu_addr & 0x3fff
-      @vram.store(addr, val)
+      @vram.write(addr, val)
       @regs.ppu_addr += @regs.vram_addr_increment
     end
 
@@ -158,8 +159,8 @@ module Hongbai
         # The pattern table lays in the VRAM from $0000 to $1fff,
         # including 512 tiles, each of 16 bytes, devided into two
         # 8 bytes planes.
-        plane0 = Array.new(8) { |i| @vram.load(row * 16 + i) }
-        plane1 = Array.new(8) { |i| @vram.load(row * 16 + 8 + i) }
+        plane0 = Array.new(8) { |i| @vram.read(row * 16 + i) }
+        plane1 = Array.new(8) { |i| @vram.read(row * 16 + 8 + i) }
         # make either plane a 8*8 matrix of bit
         plane0 = Matrix.build(8) { |r, c| (plane0[r] >> (7 - c)) & 1 }
         plane1 = Matrix.build(8) { |r, c| (plane1[r] >> (7 - c)) & 1 }
@@ -191,7 +192,7 @@ module Hongbai
 
         while @x < SCREEN_WIDTH
           attribute = get_attribute(nametable, x_idx, y_idx)
-          tile_num = @vram.load(nametable + y_idx * 32 + x_idx)
+          tile_num = @vram.read(nametable + y_idx * 32 + x_idx)
           tile = @pattern_table[@regs.bg_pattern_table_addr * 256 + tile_num, attribute]
           pattern = tile.row(tile_internal_y_offset)
 
@@ -265,7 +266,7 @@ module Hongbai
         # | | | | | | | |
         #
         offset = y_idx / 4 * 8 + x_idx / 4
-        attr_byte = @vram.load(nametable_base + 0x3c0 + offset)
+        attr_byte = @vram.read(nametable_base + 0x3c0 + offset)
         # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
         # 4*4 tiles
         #
@@ -581,46 +582,44 @@ module Hongbai
   end
 
   class Vram
-    # Memory map
-    # $0000 - $1fff pattern table (rom)
-    # $2000 - $2fff 4 nametables
-    # $3000 - $3eff mirrors of $2000 - $2eff
-    # $3f00 - $3f1f palette
-    # $3f20 - $3fff mirrors of $3f00 - $3f1f
     def initialize(rom)
       @rom = rom
-      @ram = Array.new(0x800, 0)
       @palette = Palette.new
+
+      @read_map = Array.new(0x4000)
+      @write_map = Array.new(0x4000)
+      init_memory_map
     end
 
-    attr_reader :palette, :rom
+    attr_reader :palette
 
-    def load(addr)
-      if addr < 0x2000
-        @rom.chr_load(addr)
-      elsif addr < 0x3f00
-        addr = @rom.mirroring.mirror(addr & 0xfff)
-        @ram[addr]
-      elsif addr < 0x4000
-        addr &= 0x1f
-        @palette.load(addr)
-      else
-        raise "Unreachable vram address #{addr}"
+    def init_memory_map
+      # Memory map
+      # $0000 - $1fff pattern table (rom)
+      (0..0x1fff).each do |i|
+        @read_map[i] = @rom.chr_read_method
+        @write_map[i] = @rom.chr_write_method
+      end
+      # $2000 - $2fff 4 nametables
+      # $3000 - $3eff mirrors of $2000 - $2eff
+      (0x2000..0x3eff).each do |i|
+        @read_map[i] = @rom.mirroring.ram_read_method(i)
+        @write_map[i] = @rom.mirroring.ram_write_method(i)
+      end
+      # $3f00 - $3f1f palette
+      # $3f20 - $3fff mirrors of $3f00 - $3f1f
+      (0x3f00..0x3fff).each do |i|
+        @read_map[i] = @palette.method(:load)
+        @write_map[i] = @palette.method(:store)
       end
     end
 
-    def store(addr, val)
-      if addr < 0x2000
-        @rom.chr_store(addr, val)
-      elsif addr < 0x3f00
-        addr = @rom.mirroring.mirror(addr & 0xfff)
-        @ram[addr] = val
-      elsif addr < 0x4000
-        addr &= 0x1f
-        @palette.store(addr, val)
-      else
-        raise "Unreachable vram address #{addr}"
-      end
+    def read(addr)
+      @read_map[addr][addr]
+    end
+
+    def write(addr, val)
+      @write_map[addr][addr, val]
     end
   end
 
@@ -721,7 +720,7 @@ module Hongbai
       [0,252,252],      [248,216,248],    [0,0,0],          [0,0,0]
     ]
    
-    class Item < Struct.new(:val, :color); end
+    Item = Struct.new(:val, :color)
 
     def initialize
       # rus from $3f00 to $3f1f, 32 bytes
@@ -737,17 +736,13 @@ module Hongbai
     end
 
     def load(addr)
-      @items[addr].val
+      @items[addr & 0x1f].val
     end
 
     def store(addr, val)
-      item = @items[addr]
+      item = @items[addr & 0x1f]
       item.val = val
       item.color = PALETTE[val & 0x3f]
     end
   end
 end
-
-#references:
-#https://courses.cit.cornell.edu/ee476/FinalProjects/s2009/bhp7_teg25/bhp7_teg25/
-#http://everything2.com/index.pl?node_id=925418

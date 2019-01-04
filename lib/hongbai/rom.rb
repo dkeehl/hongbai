@@ -38,11 +38,11 @@ module Hongbai
 
       def mirroring_mode(flag6)
         if (flag6 >> 3) & 1 == 1
-          Mirroring::FourScreens
+          Mirroring::FourScreens.new
         elsif flag6 & 1 == 1
-          Mirroring::Vertical
+          Mirroring::Vertical.new
         else
-          Mirroring::Horizontal
+          Mirroring::Horizontal.new
         end
       end
 
@@ -93,27 +93,60 @@ module Hongbai
   end
 
   class Mirroring
-    class Vertical < self
-      def self.to_s; "Vertical" end
+    def initialize
+      @ram = Array.new(0x800, 0)
+    end
 
-      # Map mirrored nametable addressed to their real RAM addresses 
-      def self.mirror(addr); addr % 0x800 end
+    class Vertical < self
+      def to_s; "Vertical" end
+
+      def read_ram(addr)
+        @ram[addr & 0x7ff]
+      end
+
+      def write_ram(addr, val)
+        @ram[addr & 0x7ff] = val
+      end
+
+      def ram_read_method(_addr)
+        method :read_ram
+      end
+
+      def ram_write_method(_addr)
+        method :write_ram
+      end
     end
 
     class Horizontal < self
-      def self.to_s; "Horizontal" end
+      def to_s; "Horizontal" end
 
-      def self.mirror(addr)
-        if addr < 0x800
-          addr % 0x400
-        else
-          addr % 0x400 + 0x400
-        end
+      def read_ram_1(addr)
+        @ram[addr & 0x3ff]
+      end
+
+      def write_ram_1(addr, val)
+        @ram[addr & 0x3ff] = val
+      end
+
+      def read_ram_3(addr)
+        @ram[(addr & 0x3ff) + 0x400]
+      end
+
+      def write_ram_3(addr, val)
+        @ram[(addr & 0x3ff) + 0x400] = val
+      end
+
+      def ram_read_method(addr)
+        (addr / 0x800).even? ?  method(:read_ram_1) : method(:read_ram_3)
+      end
+
+      def ram_write_method(addr)
+        (addr / 0x800).even? ? method(:write_ram_1) : method(:write_ram_3)
       end
     end
 
     class FourScreens < self
-      def self.to_s; "4-Screen" end
+      def to_s; "4-Screen" end
     end
   end
 
@@ -127,17 +160,9 @@ module Hongbai
 
     def next_scanline_irq; false end
 
-    def prg_read(addr)
-      @prg_data[addr]
-    end
-
     # Read only
     def prg_write(addr, val)
       @prg_data[addr] = val if addr < 0x8000
-    end
-
-    def chr_load(addr)
-      @chr_rom[addr]
     end
 
     # Read only
@@ -149,6 +174,14 @@ module Hongbai
 
     def prg_write_method
       method :prg_write
+    end
+
+    def chr_read_method
+      @chr_rom
+    end
+
+    def chr_write_method
+      method :chr_store
     end
   end
 end
