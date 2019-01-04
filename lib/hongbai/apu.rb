@@ -12,28 +12,27 @@ module Hongbai
     Step = Struct.new(:cycles,             # Cpu cycles until next step
                       :next_step,          # Number of the next step, starts at 0
                       :clk_irq,
-                      :clk_length_counters,
-                      :clk_sweep_units,
-                      :clk_linear_counter,
-                      :clk_envelopes)
+                      :gen_half_frame_signals,
+                      :gen_quarter_frame_signals)
+
     MODE_0 = [
-      Step.new(   1, 1, false, false, false, false, false), #0
-      Step.new(   2, 2, false, false, false, false, false), #1
-      Step.new(7457, 3, false, false, false, true,  true ), #2
-      Step.new(7456, 4, false, true,  true,  true,  true ), #3
-      Step.new(7458, 5, false, false, false, true,  true ), #4
-      Step.new(7457, 6, true,  false, false, false, false), #5
-      Step.new(   1, 7, true,  true,  true,  true,  true ), #6
-      Step.new(   1, 2, true,  false, false, false, false), #7
+      Step.new(   1, 1, false, false, false), #0
+      Step.new(   2, 2, false, false, false), #1
+      Step.new(7457, 3, false, false, true ), #2
+      Step.new(7456, 4, false, true,  true ), #3
+      Step.new(7458, 5, false, false, true ), #4
+      Step.new(7457, 6, true,  false, false), #5
+      Step.new(   1, 7, true,  true,  true ), #6
+      Step.new(   1, 2, true,  false, false), #7
     ]
     MODE_1 = [
-      Step.new(   1, 1, false, false, false, false, false), #0
-      Step.new(   1, 2, false, true,  true,  true,  true ), #1
-      Step.new(7458, 3, false, false, false, true,  true ), #2
-      Step.new(7456, 4, false, true,  true,  true,  true ), #3
-      Step.new(7458, 5, false, false, false, true,  true ), #4
-      Step.new(7456, 6, false, false, false, false, false), #5
-      Step.new(7454, 2, false, true,  true,  true,  true ), #6
+      Step.new(   1, 1, false, false, false), #0
+      Step.new(   1, 2, false, true,  true ), #1
+      Step.new(7458, 3, false, false, true ), #2
+      Step.new(7456, 4, false, true,  true ), #3
+      Step.new(7458, 5, false, false, true ), #4
+      Step.new(7456, 6, false, false, false), #5
+      Step.new(7454, 2, false, true,  true ), #6
     ]
 
     SEQUENCERS = [MODE_0, MODE_1]
@@ -123,11 +122,11 @@ module Hongbai
     end
 
     def flush
-      #@buffer.clear
+      @buffer.clear
     end
 
     def save_file
-      File.binwrite("sound", @buffer.pack("e*"))
+      #File.binwrite("sound", @buffer.pack("e*"))
     end
 
     private
@@ -162,25 +161,24 @@ module Hongbai
         if @cycles_until_next_step.zero?
           this_step = @sequencer[@step]
 
-          if this_step.clk_sweep_units
-            @pulse_1.clock_sweep_unit
-            @pulse_2.clock_sweep_unit
-          end
-
-          if this_step.clk_envelopes
+          # quarter frames clock envelopes and triangle' linear counter
+          if this_step.gen_quarter_frame_signals
             @pulse_1.clock_envelope
             @pulse_2.clock_envelope
             @noise.clock_envelope
+            @triangle.clock_linear_counter
           end
 
-          if this_step.clk_length_counters
+          # half frames clock length counters and sweep units
+          if this_step.gen_half_frame_signals
+            @pulse_1.clock_sweep_unit
+            @pulse_2.clock_sweep_unit
             @pulse_1.clock_length_counter
             @pulse_2.clock_length_counter
             @triangle.clock_length_counter
             @noise.clock_length_counter
           end
 
-          @triangle.clock_linear_counter if this_step.clk_linear_counter
           @frame_interrupt = true if this_step.clk_irq && !@interrupt_inhibit
 
           @step = this_step.next_step
@@ -508,7 +506,7 @@ module Hongbai
   class Dmc
     RATE_TABLE = [
       428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
-    ].map {|n| n / 2 } # devide cpu cycles by 2 to get apu cycle counts
+    ].map {|n| n / 2 } # devide cpu cycles by 2 because we are clocking dmc every 2 cycles
 
     def initialize
       @enabled = false
