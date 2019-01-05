@@ -33,29 +33,36 @@ module Hongbai
       end
     end
 
+    CYCLES_PER_SCANLINE = 114 
     def initialize(cpu, ppu, apu, mem, input)
       @cpu = cpu
-      @ppu = ppu
+      @ppu = ppu.main_loop
       @apu = apu
       @mem = mem
       @input = input
+      @next_scanline_cycle = CYCLES_PER_SCANLINE
 
       # for debug
       @trace = false
       @count = 0
     end
 
+    # FIXME: IRQ timing
     def step
       @cpu.step
-
-      vblank_nmi, scanline_irq, new_frame = @ppu.step(@mem.cycle)
-
-      @cpu.nmi if vblank_nmi
-      @cpu.irq if scanline_irq || @apu.irq?
-      if new_frame
-        @input.poll
-        @apu.flush
+      @cpu.irq if @apu.irq?
+      cycle = @mem.cycle
+      while @next_scanline_cycle < cycle
+        vblank_nmi, scanline_irq, new_frame = @ppu.resume
+        @cpu.nmi if vblank_nmi
+        @cpu.irq if scanline_irq
+        if new_frame
+          @input.poll
+          @apu.flush
+        end
+        @next_scanline_cycle += CYCLES_PER_SCANLINE
       end
     end
+
   end
 end

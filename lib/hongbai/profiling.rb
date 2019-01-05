@@ -31,8 +31,9 @@ module Hongbai
 
     def self.dummy_nes(rom)
       win = Dummy::Window.new
+      video = Dummy::Video.new(win)
       input = Dummy::Input.new
-      ppu = Ppu.new(rom, win)
+      ppu = Ppu.new(rom, video)
       apu = Apu.new
       mem = Memory.new(apu, ppu, rom, input)
       cpu = Cpu.new(mem)
@@ -41,6 +42,6 @@ module Hongbai
   end
 
   path = File.expand_path("../../../nes/test.nes", __FILE__)
-  #NoSDL.run_profiling(path)
-  NoSDL.run_benchmark(path)
+  NoSDL.run_profiling(path)
+  #NoSDL.run_benchmark(path)
 end

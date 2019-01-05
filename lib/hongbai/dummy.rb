@@ -1,17 +1,11 @@
 module Hongbai
   module Dummy
-    class Window
-      def create_renderer(_, _)
-        Renderer.new
-      end
-    end
+    class Window; end
 
-    class Renderer
-      def present; end
+    class Video
+      def initialize(_win); end
 
-      def draw_color=(_); end
-
-      def draw_point(_, _); end
+      def display(_colors); end
     end
 
     class Mem

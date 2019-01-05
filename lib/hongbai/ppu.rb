@@ -11,17 +11,10 @@ module Hongbai
   # ** Color emphasize and grey scale display
  
   class Ppu
-    # A scanline is 341 ppu clocks
-    # Ppu runs at 3 times the cpu clock rate
-    CYCLES_PER_SCANLINE = 114 
-    VBLANK_SCANLINE = 241
-    LAST_SCANLINE = 261
-
     def initialize(rom, driver)
       @renderer = driver
       @vram = Vram.new(rom)
       @rom = rom
-      @next_scanline_cycle = CYCLES_PER_SCANLINE
       @scanline = 0
       @frame = 0
       @x = 0
@@ -40,42 +33,43 @@ module Hongbai
       @pattern_table = Matrix.build(512, 8) {|row, col| build_tile(row, col) }
 
       @screen = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0xffffffff)
+      @screen_offset = 0
+
+      @main_loop = Fiber.new { run_main_loop }
+
       @trace = false
     end
 
-    attr_reader :frame, :scanline
+    attr_reader :frame, :scanline, :main_loop
 
-    # step : Ppu -> Int -> [Bool, Bool]
-    # The three bools are in order: vblank_nmi, scanline_irq
-    def step(cpu_cycle_count)
-      vblank_nmi, scanline_irq, new_frame = false, false, false
-
-      @sprite_height ||= @regs.sprite_height_mode
-
-      while @next_scanline_cycle < cpu_cycle_count
-        if @scanline < SCREEN_HEIGHT
+    def run_main_loop
+      loop do
+        @sprite_height ||= @regs.sprite_height_mode
+        # scanline 0 to 239
+        0.step(239) do
           render_scanline
+          @scanline += 1
+          Fiber.yield(false, @rom.next_scanline_irq, false)
         end
 
-        @scanline += 1
+        # scanline 240
+        Fiber.yield(false, @rom.next_scanline_irq, false)
 
-        scanline_irq = @rom.next_scanline_irq
+        # scanline 241
+        set_vblank_start
+        Fiber.yield(@regs.generate_vblank_nmi?, @rom.next_scanline_irq, false)
 
-        if @scanline == VBLANK_SCANLINE
-          set_vblank_start
-          vblank_nmi = @regs.generate_vblank_nmi?
-        elsif @scanline == LAST_SCANLINE
-          set_vblank_end
-          @renderer.display @screen
-          @scanline = 0
-          @frame += 1
-          new_frame = true
-        end
+        # scanline 242 to 260
+        242.step(260) { Fiber.yield(false, @rom.next_scanline_irq, false) }
 
-        @next_scanline_cycle += CYCLES_PER_SCANLINE
+        # pre-render line
+        set_vblank_end
+        @renderer.display @screen
+        @screen_offset = 0
+        @scanline = 0
+        @frame += 1
+        Fiber.yield(false, @rom.next_scanline_irq, true)
       end
-
-      return vblank_nmi, scanline_irq, new_frame
     end
 
     def read_ppu_ctrl(_addr)
@@ -377,7 +371,8 @@ module Hongbai
 
       # Ppu -> Integer -> nil
       def put_pixel(color_index)
-        @screen[@scanline * SCREEN_WIDTH + @x] = @vram.palette.get_color(color_index)
+        @screen[@screen_offset] = @vram.palette.get_color(color_index)
+        @screen_offset += 1
       end
 
       # Ppu -> Nil
