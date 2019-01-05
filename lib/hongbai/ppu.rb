@@ -17,9 +17,8 @@ module Hongbai
     VBLANK_SCANLINE = 241
     LAST_SCANLINE = 261
 
-    # initialize: Rom -> Ppu
-    def initialize(rom, win)
-      @renderer = win.create_renderer(-1, 0)
+    def initialize(rom, driver)
+      @renderer = driver
       @vram = Vram.new(rom)
       @rom = rom
       @next_scanline_cycle = CYCLES_PER_SCANLINE
@@ -40,6 +39,7 @@ module Hongbai
       # TODO: This is a hack to speed up. But it doesn't work with all mappers
       @pattern_table = Matrix.build(512, 8) {|row, col| build_tile(row, col) }
 
+      @screen = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0xffffffff)
       @trace = false
     end
 
@@ -66,7 +66,7 @@ module Hongbai
           vblank_nmi = @regs.generate_vblank_nmi?
         elsif @scanline == LAST_SCANLINE
           set_vblank_end
-          @renderer.present
+          @renderer.display @screen
           @scanline = 0
           @frame += 1
           new_frame = true
@@ -377,8 +377,7 @@ module Hongbai
 
       # Ppu -> Integer -> nil
       def put_pixel(color_index)
-        @renderer.draw_color = @vram.palette.get_color(color_index)
-        @renderer.draw_point(@x, @scanline)
+        @screen[@scanline * SCREEN_WIDTH + @x] = @vram.palette.get_color(color_index)
       end
 
       # Ppu -> Nil
@@ -624,7 +623,7 @@ module Hongbai
   end
 
   class Output
-    class Item < Struct.new(:color, :from_sprite_0, :above_bg); end
+    Item = Struct.new(:color, :from_sprite_0, :above_bg)
 
     def initialize
       @may_hit_sprite_0 = false
@@ -718,13 +717,13 @@ module Hongbai
       [248,184,248],    [248,164,192],    [240,208,176],    [252,224,168],
       [248,216,120],    [216,248,120],    [184,248,184],    [184,248,216],
       [0,252,252],      [248,216,248],    [0,0,0],          [0,0,0]
-    ]
+    ].map {|r, g, b| (0xff << 24) | (r << 16) | (g << 8) | b }
    
     Item = Struct.new(:val, :color)
 
     def initialize
       # rus from $3f00 to $3f1f, 32 bytes
-      @items = Array.new(32) { Item.new(0, [0, 0, 0]) }
+      @items = Array.new(32) { Item.new(0, 0xffffffff) }
       # Mirroring
       [0x10, 0x14, 0x18, 0x1c].each do |addr|
         @items[addr] = @items[addr - 0x10]

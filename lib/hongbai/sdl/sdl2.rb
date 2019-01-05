@@ -33,6 +33,10 @@ module Hongbai
       SetRenderDrawColor: [[:pointer, :uint8, :uint8, :uint8, :uint8], :int],
       RenderDrawPoint: [[:pointer, :int, :int], :int],
       RenderPresent: [[:pointer], :int],
+      RenderClear: [[:pointer], :int],
+      RenderCopy: [[:pointer, :pointer, :pointer, :pointer], :int],
+      CreateTexture: [[:pointer, :uint32, :int, :int, :int], :pointer],
+      UpdateTexture: [[:pointer, :pointer, :pointer, :int], :int],
 
       # Events
       PollEvent: [[:pointer], :int],

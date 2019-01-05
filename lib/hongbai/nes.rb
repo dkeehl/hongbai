@@ -16,19 +16,19 @@ module Hongbai
                                   SDL2::Window::POS_CENTERED,
                                   SDL2::Window::POS_CENTERED,
                                   SCREEN_WIDTH, SCREEN_HEIGHT, 0)
+        video = SDL2::Video.new(win)
         map = KeyMap.default_1p
         controller = Controller.new(map)
         input = Input.new(controller)
 
         apu = Apu.new
-        ppu = Ppu.new(rom, win)
+        ppu = Ppu.new(rom, video)
         mem = Memory.new(apu, ppu, rom, input)
         cpu = Cpu.new(mem)
         nes = new(cpu, ppu, apu, mem, input)
         begin
           loop { nes.step }
         ensure
-          mem.dump
         end
       end
     end
