@@ -11,23 +11,48 @@ module Hongbai
   # ** Color emphasize and grey scale display
  
   class Ppu
+    VRAM_ADDR_INC = [1, 32]
+    SPRITE_PATTERN_TAB_ADDR = [0, 0x1000]
+    NAME_TABLE_BASE = [0x2000, 0x2400, 0x2800, 0x2c00]
+
     def initialize(rom, driver)
       @renderer = driver
       @vram = Vram.new(rom)
       @rom = rom
-      @scanline = 0
-      @frame = 0
-      @x = 0
-      @regs = Regs.new
       @oam = Oam.new
       @oam2 = Oam2.new
-
       # A buffer that computes color priority and checks sprite 0 hit.
       @buffer = Output.new
 
-      # Upper left corner of the visiable area in current nametable
+      # Registers
+      # PPU_CTRL
+      @name_table_base = 0x2000
+      @vram_addr_increment = 1
+      @sprite_pattern_table_addr = 0
+      @bg_pattern_table_addr = 0
+      @sprite_8x16_mode = false
+      @sprite_height = 8
+      @generate_vblank_nmi = false
+      # PPU_MASK
+      @gray_scale = false
+      @show_leftmost_8_bg = false
+      @show_leftmost_8_sprite = false
+      @show_background = false
+      @show_sprites = false
+      @emphasize_red = false
+      @emphasize_green = false
+      @emphasize_blue = false
+      # PPU_STATUS
+      @ppu_status = 0
+      # PPU_SCROLL
       @scroll_x = 0
       @scroll_y = 0
+      # PPU_ADDR
+      @ppu_addr =0
+      @scanline = 0
+      @x = 0
+      @toggle = false
+      @ppu_data_read_buffer = 0
 
       # TODO: This is a hack to speed up. But it doesn't work with all mappers
       @pattern_table = Matrix.build(512, 8) {|row, col| build_tile(row, col) }
@@ -37,6 +62,7 @@ module Hongbai
 
       @main_loop = Fiber.new { run_main_loop }
 
+      @frame = 0
       @trace = false
     end
 
@@ -44,7 +70,6 @@ module Hongbai
 
     def run_main_loop
       loop do
-        @sprite_height ||= @regs.sprite_height_mode
         # scanline 0 to 239
         0.step(239) do
           render_scanline
@@ -57,7 +82,7 @@ module Hongbai
 
         # scanline 241
         set_vblank_start
-        Fiber.yield(@regs.generate_vblank_nmi?, @rom.next_scanline_irq, false)
+        Fiber.yield(@generate_vblank_nmi, @rom.next_scanline_irq, false)
 
         # scanline 242 to 260
         242.step(260) { Fiber.yield(false, @rom.next_scanline_irq, false) }
@@ -72,78 +97,82 @@ module Hongbai
       end
     end
 
-    def read_ppu_ctrl(_addr)
-      @regs.ppu_ctrl
-    end
-
-    def read_ppu_mask(_addr)
-      @regs.ppu_mask
-    end
-
     def read_oam_data(_addr)
-      @oam[@regs.oam_addr]
+      @oam.read
     end
 
     def read_ppu_status(_addr)
-      @regs.reset_toggle
-      @regs.ppu_status
+      @toggle = false
+      @ppu_status
     end
 
     def read_ppu_data(_addr)
       # Mirror down addresses greater than 0x3fff
-      addr = @regs.ppu_addr & 0x3fff
+      addr = @ppu_addr & 0x3fff
       val = @vram.read(addr)
-      @regs.ppu_addr += @regs.vram_addr_increment
-      buffered = @regs.ppu_data_read_buffer
-      @regs.ppu_data_read_buffer = val
+      @ppu_addr += @vram_addr_increment
+      buffered = @ppu_data_read_buffer
+      @ppu_data_read_buffer = val
 
       addr < 0x3f00 ? buffered : val
     end
 
     def write_ppu_ctrl(_addr, val)
-      @regs.ppu_ctrl = val
+      @name_table_base           = NAME_TABLE_BASE[val & 3]
+      @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
+      @sprite_pattern_table_addr = SPRITE_PATTERN_TAB_ADDR[val[3]]
+      @bg_pattern_table_addr     = val[4]
+      @sprite_8x16_mode          = val[5] == 1
+      @generate_vblank_nmi       = val[7] == 1
+
+      @sprite_height = @sprite_8x16_mode ? 16 : 8
     end
 
     def write_ppu_mask(_addr, val)
-      @regs.ppu_mask = val
+      @gray_scale             = val[0] == 1
+      @show_leftmost_8_bg     = val[1] == 1
+      @show_leftmost_8_sprite = val[2] == 1
+      @show_background        = val[3] == 1
+      @show_sprites           = val[4] == 1
+      @emphasize_red          = val[5] == 1
+      @emphasize_green        = val[6] == 1
+      @emphasize_blue         = val[7] == 1
     end
 
     def write_oam_addr(_addr, val)
-      @regs.oam_addr = val
+      @oam.addr = val
     end
 
     # Public for OAM DMA
     def write_oam_data(_addr, val)
-      @oam[@regs.oam_addr] = val
-      @regs.oam_addr = (@regs.oam_addr + 1) & 0xff
+      @oam.write val
     end
 
     def write_ppu_scroll(_addr, val)
-      if @regs.toggle? # toggle is true, the second write
+      if @toggle # toggle is true, the second write
         @scroll_y = val
       else
         @scroll_x = val
       end
-      @regs.toggle!
+      @toggle = !@toggle
     end
 
     def write_ppu_addr(_addr, val)
-      if @regs.toggle?
-        @regs.ppu_addr = @regs.ppu_addr & 0xff00 | val
+      if @toggle
+        @ppu_addr = @ppu_addr & 0xff00 | val
       else
-        @regs.ppu_addr = @regs.ppu_addr & 0x00ff | (val << 8)
+        @ppu_addr = @ppu_addr & 0x00ff | (val << 8)
         # This is a hack
-        nametable = (@regs.ppu_addr >> 10) & 3
-        @regs.ppu_ctrl = @regs.ppu_ctrl & (0xfc | nametable)
+        @name_table_base = NAME_TABLE_BASE[(@ppu_addr >> 10) & 3]
       end
-      @regs.toggle!
+      @toggle = !@toggle
     end
 
     def write_ppu_data(_addr, val)
       # Mirror down addresses greater than 0x3fff
-      addr = @regs.ppu_addr & 0x3fff
+      addr = @ppu_addr & 0x3fff
       @vram.write(addr, val)
-      @regs.ppu_addr += @regs.vram_addr_increment
+      @ppu_addr += @vram_addr_increment
     end
 
     private
@@ -173,7 +202,7 @@ module Hongbai
         y_idx = (@scroll_y + @scanline) / 8
         # nametable x index
         x_idx = (@scroll_x + @x) / 8
-        nametable = @regs.nametable_base
+        nametable = @name_table_base
 
         tile_internal_y_offset = (@scroll_y  + @scanline) % 8
         tile_internal_x_offset = @scroll_x % 8
@@ -187,7 +216,7 @@ module Hongbai
         while @x < SCREEN_WIDTH
           attribute = get_attribute(nametable, x_idx, y_idx)
           tile_num = @vram.read(nametable + y_idx * 32 + x_idx)
-          tile = @pattern_table[@regs.bg_pattern_table_addr * 256 + tile_num, attribute]
+          tile = @pattern_table[@bg_pattern_table_addr * 256 + tile_num, attribute]
           pattern = tile.row(tile_internal_y_offset)
 
           if first
@@ -224,11 +253,11 @@ module Hongbai
       # Render a tile. (Only the current scanline)
       # Ppu -> Array<ColorIndex> -> Nil | Range -> nil
       def render_tile_line(bg_colors, range = (0..7))
-        if @regs.show_background?
-          if @regs.show_sprites?
+        if @show_background
+          if @show_sprites
             # push_bg returns true when sprite 0 hits.
             if @buffer.push_bg(bg_colors, range, @x)
-              @regs.set_sprite_zero_hit(true)
+              set_sprite_zero_hit(true)
               #raise "frame #{@frame}, scanline #{@scanline}"
             end
             range.each { put_pixel(@buffer[@x]); @x += 1 }
@@ -236,7 +265,7 @@ module Hongbai
             # Sprite rendering is disabled.
             range.each {|i| put_pixel(bg_colors[i]); @x += 1 }
           end
-        elsif @regs.show_sprites?
+        elsif @show_sprites
           # Background rendering is disabled.
           range.each { put_pixel(@buffer[@x]); @x += 1 }
         else
@@ -313,7 +342,7 @@ module Hongbai
         while n < 64
           y = @oam[n * 4 + m]
           if sprite_on_scanline(y)
-            @regs.set_sprite_overflow(true)
+            set_sprite_overflow(true)
             break
           else
             n += 1
@@ -337,9 +366,9 @@ module Hongbai
 
         @oam2.each_sprite do |tile, attr, flip_h, flip_v, x, y, prior, sprite0|
           y_inter = @scanline - y
-          if @sprite_height == 8
+          if !@sprite_8x16_mode
             # 8*8 sprite mode
-            tile += @regs.sprite_pattern_table_addr
+            tile += @sprite_pattern_table_addr
             pattern = @pattern_table[tile, attr]
             y_inter = flip_v ? 7 - y_inter : y_inter
           else
@@ -369,113 +398,50 @@ module Hongbai
         bank + (tile_number & 0xfe)
       end
 
-      # Ppu -> Integer -> nil
       def put_pixel(color_index)
         @screen[@screen_offset] = @vram.palette.get_color(color_index)
         @screen_offset += 1
       end
 
-      # Ppu -> Nil
+      def set_in_vblank(b)
+        b ? @ppu_status |= 0x80 : @ppu_status &= 0x7f
+      end
+
+      def set_sprite_zero_hit(b)
+        b ? @ppu_status |= 0x40 : @ppu_status &= 0xbf
+      end
+
+      def set_sprite_overflow(b)
+        b ? @ppu_status |= 0x20 : @ppu_status &= 0xdf
+      end
+
       def set_vblank_start
-        @regs.set_in_vblank(true)
+        set_in_vblank(true)
       end
 
       # Ppu -> Nil
       def set_vblank_end
-        @regs.set_in_vblank(false)
-        @regs.set_sprite_zero_hit(false)
-        @regs.set_sprite_overflow(false)
+        set_in_vblank(false)
+        set_sprite_zero_hit(false)
+        set_sprite_overflow(false)
       end
-  end
-
-  class Regs
-    def initialize
-      @ppu_ctrl = 0
-      @ppu_mask = 0
-      @ppu_status = 0
-      @oam_addr = 0
-      @ppu_addr = 0
-
-      # Indicates if a write is the second write to PPUSCROLL and PPUADDRESS
-      @toggle = false
-      @ppu_data_read_buffer = 0
-    end
-
-    attr_accessor :ppu_ctrl, :ppu_mask, :ppu_status, :oam_addr,
-                  :ppu_addr, :ppu_data_read_buffer
-
-    def toggle?; @toggle end
-
-    def toggle!
-      @toggle = !@toggle
-    end
-
-    def reset_toggle
-      @toggle = false
-    end
-
-    # Regs -> Bool -> Nil
-    def set_in_vblank(b)
-      b ? @ppu_status |= 0x80 : @ppu_status &= 0x7f
-    end
-
-    # Regs -> Bool -> Nil
-    def set_sprite_zero_hit(b)
-      b ? @ppu_status |= 0x40 : @ppu_status &= 0xbf
-    end
-
-    # Regs -> Bool -> Nil
-    def set_sprite_overflow(b)
-      b ? @ppu_status |= 0x20 : @ppu_status &= 0xdf
-    end
-
-    # Regs -> Bool
-    def show_background?
-      ((@ppu_mask >> 3) & 1) == 1
-    end
-
-    # Regs -> Bool
-    def show_sprites?
-      ((@ppu_mask >> 4) & 1) == 1
-    end
-
-    # Regs -> Integer
-    # return $2000 or $2400 or $2800 or $2c00
-    def nametable_base
-      (@ppu_ctrl & 3) * 0x400 + 0x2000
-    end
-
-    def vram_addr_increment
-      ((@ppu_ctrl >> 2) & 1).zero? ? 1 : 32
-    end
-
-    # Regs -> Integer
-    # return 0 or 0x1000
-    def sprite_pattern_table_addr
-      ((@ppu_ctrl >> 3) & 1) * 0x1000
-    end
-
-    # Regs -> Integer
-    # return 0 or 1
-    def bg_pattern_table_addr
-      (@ppu_ctrl >> 4) & 1
-    end
-
-    # Regs -> Integer
-    # return 8 or 16
-    def sprite_height_mode
-      ((@ppu_ctrl >> 5) & 1) * 8 + 8
-    end
-
-    # Regs -> Bool
-    def generate_vblank_nmi?
-      ((@ppu_ctrl >> 7) & 1) == 1
-    end
   end
 
   class Oam
     def initialize
       @arr = Array.new(256, 0)
+      @addr = 0
+    end
+
+    attr_writer :addr
+
+    def read
+      @arr[@addr]
+    end
+
+    def write(val)
+      @arr[@addr] = val
+      @addr = (@addr + 1) & 0xff
     end
 
     def [](n)

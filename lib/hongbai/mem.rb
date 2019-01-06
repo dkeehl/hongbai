@@ -130,8 +130,6 @@ module Hongbai
         (0x2000..0x3fff).each do |i|
           @read_map[i] =
             case i % 8
-            when 0 then @ppu.method(:read_ppu_ctrl)
-            when 1 then @ppu.method(:read_ppu_mask)
             when 2 then @ppu.method(:read_ppu_status)
             when 4 then @ppu.method(:read_oam_data)
             when 7 then @ppu.method(:read_ppu_data)

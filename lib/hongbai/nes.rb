@@ -27,8 +27,12 @@ module Hongbai
         cpu = Cpu.new(mem)
         nes = new(cpu, ppu, apu, mem, input)
         begin
+          t = Time.now
           loop { nes.step }
         ensure
+          dur = Time.now - t
+          frames = ppu.frame
+          puts "#{frames} frames in %.1f seconds, %.1f FPS" % [dur, frames / dur]
         end
       end
     end
