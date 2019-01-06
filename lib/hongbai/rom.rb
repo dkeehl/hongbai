@@ -158,8 +158,6 @@ module Hongbai
       (0x8000..0xffff).each {|i| @prg_data[i] = @prg_rom[i & prg_addr_mask] }
     end
 
-    def next_scanline_irq; false end
-
     # Read only
     def prg_write(addr, val)
       @prg_data[addr] = val if addr < 0x8000

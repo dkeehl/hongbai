@@ -15,7 +15,8 @@ module Hongbai
     SPRITE_PATTERN_TAB_ADDR = [0, 0x1000]
     NAME_TABLE_BASE = [0x2000, 0x2400, 0x2800, 0x2c00]
 
-    def initialize(rom, driver)
+    def initialize(rom, driver, context)
+      @context = context
       @renderer = driver
       @vram = Vram.new(rom)
       @rom = rom
@@ -74,18 +75,18 @@ module Hongbai
         0.step(239) do
           render_scanline
           @scanline += 1
-          Fiber.yield(false, @rom.next_scanline_irq, false)
+          Fiber.yield
         end
 
         # scanline 240
-        Fiber.yield(false, @rom.next_scanline_irq, false)
+        Fiber.yield
 
         # scanline 241
         set_vblank_start
-        Fiber.yield(@generate_vblank_nmi, @rom.next_scanline_irq, false)
+        Fiber.yield(@generate_vblank_nmi)
 
         # scanline 242 to 260
-        242.step(260) { Fiber.yield(false, @rom.next_scanline_irq, false) }
+        242.step(260) { Fiber.yield }
 
         # pre-render line
         set_vblank_end
@@ -93,7 +94,8 @@ module Hongbai
         @screen_offset = 0
         @scanline = 0
         @frame += 1
-        Fiber.yield(false, @rom.next_scanline_irq, true)
+        @context.on_new_frame
+        Fiber.yield
       end
     end
 
@@ -274,43 +276,55 @@ module Hongbai
         end
       end
  
+      ATTR_TABLE = (0..0xff).map do |val|
+        # map each u8 value to an arrary of 30 * 32 = 960 attributes
+        arr = []
+        (0..29).each do |y|
+          (0..31).each do |x|
+            arr[y * 32 + x] =
+              # Every 4*4 tiles share an attribute byte
+              # ________________
+              # |/|/|/|/|_|_|_|_
+              # |/|/|/|/|_|_|_|_
+              # |/|/|/|/|_|_|_|_
+              # |/|/|/|/|_|_|_|_
+              # |_|_|_|_|_|_|_|_
+              # |_|_|_|_|_|_|_|_
+              # |_|_|_|_|_|_|_|_
+              # | | | | | | | |
+              #
+              # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
+              # 4*4 tiles
+              #
+              # 7654 3210
+              # |||| ||++- topleft corner
+              # |||| ++--- topright corner
+              # ||++ ----- bottomleft corner
+              # ++-- ----- bottomright corner
+              if y % 4 < 2
+                if x % 4 < 2 # topleft
+                  val & 3
+                else # topright
+                  (val >> 2) & 3
+                end
+              else
+                if x % 4 < 2 # bottomleft
+                  (val >> 4) & 3
+                else # topright
+                  (val >> 6) & 3
+                end
+              end
+          end
+        end
+        arr
+      end
+
       # Ppu -> Integer -> Integer -> Integer -> Integer
       def get_attribute(nametable_base, x_idx, y_idx)
         # load the attribute
-        # Every 4*4 tiles share an attribute byte
-        # ________________
-        # |/|/|/|/|_|_|_|_
-        # |/|/|/|/|_|_|_|_
-        # |/|/|/|/|_|_|_|_
-        # |/|/|/|/|_|_|_|_
-        # |_|_|_|_|_|_|_|_
-        # |_|_|_|_|_|_|_|_
-        # |_|_|_|_|_|_|_|_
-        # | | | | | | | |
-        #
         offset = y_idx / 4 * 8 + x_idx / 4
         attr_byte = @vram.read(nametable_base + 0x3c0 + offset)
-        # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
-        # 4*4 tiles
-        #
-        # 7654 3210
-        # |||| ||++- topleft corner
-        # |||| ++--- topright corner
-        # ||++ ----- bottomleft corner
-        # ++-- ----- bottomright corner
-        if y_idx % 4 < 2
-          if x_idx % 4 < 2 # topleft
-            attr_byte & 3
-          else # topright
-            (attr_byte >> 2) & 3
-          end
-        else
-          if x_idx % 4 < 2 # bottomleft
-            (attr_byte >> 4) & 3
-          else # topright
-            (attr_byte >> 6) & 3
-          end
-        end
+        ATTR_TABLE[attr_byte][y_idx * 32 + x_idx]
       end
 
       # Ppu -> nil
