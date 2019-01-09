@@ -44,7 +44,7 @@ module Hongbai
 
       # for debug
       @trace = false
-      @count = 0
+      @frame = 0
     end
 
     # FIXME: IRQ timing
@@ -61,10 +61,9 @@ module Hongbai
     def on_new_frame
       @input.poll
       @apu.flush
+      @frame += 1
     end
 
-    def frame
-      @ppu.frame
-    end
+    attr_reader :frame
   end
 end

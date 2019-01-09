@@ -1,5 +1,4 @@
 require_relative 'sdl/video'
-require 'matrix'
 
 module Hongbai
   SCREEN_WIDTH = 256
@@ -12,18 +11,24 @@ module Hongbai
  
   class Ppu
     VRAM_ADDR_INC = [1, 32]
-    SPRITE_PATTERN_TAB_ADDR = [0, 0x1000]
     NAME_TABLE_BASE = [0x2000, 0x2400, 0x2800, 0x2c00]
 
     def initialize(rom, driver, context)
       @context = context
       @renderer = driver
-      @vram = Vram.new(rom)
+      @palette = Palette.new
+      @vram = Vram.new(rom, @palette)
       @rom = rom
       @oam = Oam.new
       @oam2 = Oam2.new
       # A buffer that computes color priority and checks sprite 0 hit.
-      @buffer = Output.new
+      @sprite_buffer = Output.new
+      @bg_buffer = Array.new(8 * 2, 0xffffffff)
+      
+      # Rendering latches
+      @tile_num = 0xff
+      @attribute = 0
+      @tile_bitmap_low = 0
 
       # Registers
       # PPU_CTRL
@@ -38,8 +43,12 @@ module Hongbai
       @gray_scale = false
       @show_leftmost_8_bg = false
       @show_leftmost_8_sprite = false
-      @show_background = false
-      @show_sprites = false
+      @render_functions =               # $2001 bit 4 and bit 3
+        [method(:render_none),          # 00
+         method(:render_bg),            # 01
+         method(:render_sprite),        # 10
+         method(:render_bg_and_sprite)] # 11
+      @render_function = @render_functions[0]
       @emphasize_red = false
       @emphasize_green = false
       @emphasize_blue = false
@@ -55,15 +64,15 @@ module Hongbai
       @toggle = false
       @ppu_data_read_buffer = 0
 
-      # TODO: This is a hack to speed up. But it doesn't work with all mappers
-      @pattern_table = Matrix.build(512, 8) {|row, col| build_tile(row, col) }
+      @pattern_table = rom.pattern_table
 
-      @screen = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0xffffffff)
-      @screen_offset = 0
+      @output = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0xffffffff)
+      @output_offset = 0
 
       @main_loop = Fiber.new { run_main_loop }
+      @even_frame = true
 
-      @frame = 0
+      # debug
       @trace = false
     end
 
@@ -90,10 +99,10 @@ module Hongbai
 
         # pre-render line
         set_vblank_end
-        @renderer.display @screen
-        @screen_offset = 0
+        @renderer.display @output
+        @output_offset = 0
         @scanline = 0
-        @frame += 1
+        @even_frame = !@even_frame
         @context.on_new_frame
         Fiber.yield
       end
@@ -122,8 +131,8 @@ module Hongbai
     def write_ppu_ctrl(_addr, val)
       @name_table_base           = NAME_TABLE_BASE[val & 3]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
-      @sprite_pattern_table_addr = SPRITE_PATTERN_TAB_ADDR[val[3]]
-      @bg_pattern_table_addr     = val[4]
+      @sprite_pattern_table_addr = val[3] * 2048 # 256 tiles * 8 rows per tile
+      @bg_pattern_table_addr     = val[4] * 2048
       @sprite_8x16_mode          = val[5] == 1
       @generate_vblank_nmi       = val[7] == 1
 
@@ -134,11 +143,10 @@ module Hongbai
       @gray_scale             = val[0] == 1
       @show_leftmost_8_bg     = val[1] == 1
       @show_leftmost_8_sprite = val[2] == 1
-      @show_background        = val[3] == 1
-      @show_sprites           = val[4] == 1
       @emphasize_red          = val[5] == 1
       @emphasize_green        = val[6] == 1
       @emphasize_blue         = val[7] == 1
+      @render_function = @render_functions[(val >> 3) & 3]
     end
 
     def write_oam_addr(_addr, val)
@@ -178,32 +186,109 @@ module Hongbai
     end
 
     private
-      # Ppu -> Integer -> Integer -> Tile
-      # A Tile is a 8*8 Matrix of Color
-      def build_tile(row, col)
-        # The pattern table lays in the VRAM from $0000 to $1fff,
-        # including 512 tiles, each of 16 bytes, devided into two
-        # 8 bytes planes.
-        plane0 = Array.new(8) { |i| @vram.read(row * 16 + i) }
-        plane1 = Array.new(8) { |i| @vram.read(row * 16 + 8 + i) }
-        # make either plane a 8*8 matrix of bit
-        plane0 = Matrix.build(8) { |r, c| (plane0[r] >> (7 - c)) & 1 }
-        plane1 = Matrix.build(8) { |r, c| (plane1[r] >> (7 - c)) & 1 }
-        # plane0 controls the 0 bit of color index,
-        # plane1 controls the 1 bit whild the attribute controls the higher 2 bits
-        tile = plane0 + plane1 * Matrix.scalar(8, 2)
-        attribute = col << 2
-        tile.map {|i| i.zero? ? 0 : (i | attribute) }
+      def pre_render_scanline
+        # cycle 256
+        ppu_addr_incr_y
+        # cycle 257
+        ppu_addr_copy_hor
+        # cycle 280-304
+        ppu_addr_copy_ver
+        321.step(336, 8) do
+          read_nametable_byte
+          read_attr_byte
+          get_tile_low
+          get_tile_high
+          reload_shift_register
+          ppu_addr_inc_x
+        end
       end
 
-      # Ppu -> Nil
+      def visible_scanline
+        # 341 cycles in total
+        # cycle 0, idle
+        # cycle 1, wait_cycle
+        # cycle 2, sprite 0 hit starts here
+        read_nametable_byte
+        # cycle 3-4
+        read_attr_byte
+        # cycle 5-6
+        get_tile_low
+        # cycle 7-8
+        get_tile_high
+        reload_shift_register
+        ppu_addr_inc_x
+        # cycle 9-64
+        9.step(64, 8) do
+          read_nametable_byte
+          read_attr_byte
+          get_tile_low
+          get_tile_high
+          reload_shift_register
+          ppu_addr_inc_x
+        end
+        # In fact this happens during cycle 1-64
+        @oam2.init
+        # cycle 65-256, with sprite evaluation
+        65.step(256, 8) do
+          read_nametable_byte
+          read_attr_byte
+          get_tile_low
+          get_tile_high
+          reload_shift_register
+          ppu_addr_inc_x
+        end
+        # still in cycle 256
+        ppu_addr_inc_y
+        # cycle 257
+        ppu_addr_copy_hor
+        # still in 257. 257-320, fetch sprite tiles for the next scanline
+        257.step(320, 8) do
+          sprite_fetch # 2 cycles
+          read_sprite_x_pos # 1 cycle
+          read_sprite_attr  # 1 cycle
+          get_tile_low
+          get_tile_high
+          buffer_sprite
+        end
+        # cycle 321-336, fetch the first two tiles for the next scanline
+        321.step(336, 8) do
+          read_nametable_byte
+          read_attr_byte
+          get_tile_low
+          get_tile_high
+          reload_shift_register
+          ppu_addr_inc_x
+        end
+        # cycle 337-340
+        #read_nametable_byte
+        #read_nametable_byte
+      end
+
+      def read_nametable_byte
+        @tile_num = @vram.read(@ppu_addr.tile)
+      end
+
+      def read_attr_byte
+        byte = @vram.read(@ppu_addr.attribute)
+        @attribute = ATTR_TABLE[byte][@ppu_addr.to_i & 0x3ff]
+      end
+
+      def get_tile_low
+        # Not really do a memory fetch, just determine the address of the pattern
+        @pattern_addr = @bg_pattern_table_addr + @tile_num * 8 + @ppu_addr.fine_y_offset
+      end
+
+      def get_tile_high
+        @pattern = @pattern_table[@pattern_addr][@attribute]
+      end
+
       def render_scanline
         # evaluate sprite info for next scanline
         sprite_evaluation
         # nametable y index
-        y_idx = (@scroll_y + @scanline) / 8
+        y_idx = ((@scroll_y + @scanline) / 8) % 30
         # nametable x index
-        x_idx = (@scroll_x + @x) / 8
+        x_idx = ((@scroll_x + @x) / 8) & 0x1f
         nametable = @name_table_base
 
         tile_internal_y_offset = (@scroll_y  + @scanline) % 8
@@ -218,21 +303,21 @@ module Hongbai
         while @x < SCREEN_WIDTH
           attribute = get_attribute(nametable, x_idx, y_idx)
           tile_num = @vram.read(nametable + y_idx * 32 + x_idx)
-          tile = @pattern_table[@bg_pattern_table_addr * 256 + tile_num, attribute]
-          pattern = tile.row(tile_internal_y_offset)
+          pattern =
+            @pattern_table[@bg_pattern_table_addr + tile_num * 8 + tile_internal_y_offset][attribute]
 
           if first
             if first_tile
-              render_tile_line(pattern, first)
+              @render_function[pattern, first]
               first_tile = false
             elsif @x > 247
-              render_tile_line(pattern, last)
+              @render_function[pattern, last]
               break
             else
-              render_tile_line pattern
+              @render_function[pattern]
             end
           else
-            render_tile_line pattern
+            @render_function[pattern]
           end
 
           x_idx += 1
@@ -240,7 +325,7 @@ module Hongbai
             # nametable change
             # $2000 -> $2400 -> $2000
             # $2800 -> $2C00 -> $2800
-            (nametable / 0x400).even? ? nametable += 0x400 : nametable -= 0x400
+            nametable ^= 0x400
             x_idx = 0
           end
         end
@@ -251,35 +336,34 @@ module Hongbai
         @x = 0
       end
 
-
-      # Render a tile. (Only the current scanline)
-      # Ppu -> Array<ColorIndex> -> Nil | Range -> nil
-      def render_tile_line(bg_colors, range = (0..7))
-        if @show_background
-          if @show_sprites
-            # push_bg returns true when sprite 0 hits.
-            if @buffer.push_bg(bg_colors, range, @x)
-              set_sprite_zero_hit(true)
-              #raise "frame #{@frame}, scanline #{@scanline}"
-            end
-            range.each { put_pixel(@buffer[@x]); @x += 1 }
-          else
-            # Sprite rendering is disabled.
-            range.each {|i| put_pixel(bg_colors[i]); @x += 1 }
-          end
-        elsif @show_sprites
-          # Background rendering is disabled.
-          range.each { put_pixel(@buffer[@x]); @x += 1 }
-        else
-          # Both background and pixel rendering are disabled.
-          range.each { put_pixel(0); @x += 1 }
+      def render_bg_and_sprite(bg_colors, range = (0..7))
+        # push_bg returns true when sprite 0 hits.
+        if @sprite_buffer.push_bg(bg_colors, range, @x)
+          set_sprite_zero_hit(true)
+          #raise "frame #{@frame}, scanline #{@scanline}"
         end
+        range.each { put_pixel(@sprite_buffer[@x]); @x += 1 }
       end
- 
+
+      def render_bg(bg_colors, range = (0..7))
+        # Sprite rendering is disabled.
+        range.each {|i| put_pixel(bg_colors[i]); @x += 1 }
+      end
+
+      def render_sprite(bg_colors, range = (0..7))
+        # Background rendering is disabled.
+        range.each { put_pixel(@sprite_buffer[@x]); @x += 1 }
+      end
+
+      def render_none(_bg_colors, range = (0..7))
+        # Both background and pixel rendering are disabled.
+        range.each { put_pixel(0); @x += 1 }
+      end
+
       ATTR_TABLE = (0..0xff).map do |val|
-        # map each u8 value to an arrary of 30 * 32 = 960 attributes
+        # map each u8 value to an arrary of 32 * 32 = 960 attributes
         arr = []
-        (0..29).each do |y|
+        (0..31).each do |y| # y is 29 at the most, 30, 31 are not used
           (0..31).each do |x|
             arr[y * 32 + x] =
               # Every 4*4 tiles share an attribute byte
@@ -375,34 +459,32 @@ module Hongbai
       # Ppu -> nil
       # read oam2 data to buffer
       def sprite_fetch
-        @buffer.clear
-        @buffer.may_hit_sprite_0 = @oam2.has_sprite_zero
+        @sprite_buffer.clear
+        @sprite_buffer.may_hit_sprite_0 = @oam2.has_sprite_zero
 
         @oam2.each_sprite do |tile, attr, flip_h, flip_v, x, y, prior, sprite0|
           y_inter = @scanline - y
           if !@sprite_8x16_mode
             # 8*8 sprite mode
             tile += @sprite_pattern_table_addr
-            pattern = @pattern_table[tile, attr]
             y_inter = flip_v ? 7 - y_inter : y_inter
+            colors = @pattern_table[tile * 8 + y_inter][attr]
           else
             # 8*16 sprite mode
             tile = Ppu.to_8x16_sprite_tile_addr(tile)
             if y_inter <= 7 && !flip_v || y_inter > 7 && flip_v
-              pattern = @pattern_table[tile, attr]
               y_inter = flip_v ? 15 - y_inter : y_inter
+              colors = @pattern_table[tile * 8 + y_inter][attr]
             else
-              pattern = @pattern_table[tile + 1, attr]
               y_inter = flip_v ? 7 - y_inter : y_inter % 8
+              colors = @pattern_table[(tile + 1) * 8 + y_inter][attr]
             end
           end
 
-          colors = pattern.row(y_inter)
-          # TODO: Can this be done without using the `to_a` operation?
           if flip_h
-            colors = colors.to_a.reverse
+            colors = colors.reverse
           end
-          @buffer.push_sprite(colors, x, prior, sprite0)
+          @sprite_buffer.push_sprite(colors, x, prior, sprite0)
         end
       end
 
@@ -413,8 +495,8 @@ module Hongbai
       end
 
       def put_pixel(color_index)
-        @screen[@screen_offset] = @vram.palette.get_color(color_index)
-        @screen_offset += 1
+        @output[@output_offset] = @palette.get_color(color_index)
+        @output_offset += 1
       end
 
       def set_in_vblank(b)
@@ -556,9 +638,9 @@ module Hongbai
   end
 
   class Vram
-    def initialize(rom)
+    def initialize(rom, palette)
       @rom = rom
-      @palette = Palette.new
+      @palette = palette
 
       @read_map = Array.new(0x4000)
       @write_map = Array.new(0x4000)
