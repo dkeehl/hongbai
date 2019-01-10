@@ -1,4 +1,5 @@
-require_relative 'sdl/video'
+require_relative './sdl/video'
+require_relative './ppu_address'
 
 module Hongbai
   SCREEN_WIDTH = 256
@@ -32,7 +33,7 @@ module Hongbai
 
       # Registers
       # PPU_CTRL
-      @name_table_base = 0x2000
+      #@name_table_base = 0x2000
       @vram_addr_increment = 1
       @sprite_pattern_table_addr = 0
       @bg_pattern_table_addr = 0
@@ -49,18 +50,19 @@ module Hongbai
          method(:render_sprite),        # 10
          method(:render_bg_and_sprite)] # 11
       @render_function = @render_functions[0]
+      @rendering_enabled = false
       @emphasize_red = false
       @emphasize_green = false
       @emphasize_blue = false
       # PPU_STATUS
       @ppu_status = 0
       # PPU_SCROLL
-      @scroll_x = 0
-      @scroll_y = 0
+      #@scroll_x = 0
+      #@scroll_y = 0
       # PPU_ADDR
-      @ppu_addr =0
-      @scanline = 0
-      @x = 0
+      @ppu_addr = Address.new
+      @tmp_addr = TempAddress.new
+      @fine_x_offset = 0
       @toggle = false
       @ppu_data_read_buffer = 0
 
@@ -68,6 +70,8 @@ module Hongbai
 
       @output = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0xffffffff)
       @output_offset = 0
+      @scanline = 0
+      @x = 0
 
       @main_loop = Fiber.new { run_main_loop }
       @even_frame = true
@@ -77,9 +81,11 @@ module Hongbai
     end
 
     attr_reader :frame, :scanline, :main_loop
+    attr_writer :trace
 
     def run_main_loop
       loop do
+        @ppu_addr.copy @tmp_addr if @rendering_enabled
         # scanline 0 to 239
         0.step(239) do
           render_scanline
@@ -119,9 +125,9 @@ module Hongbai
 
     def read_ppu_data(_addr)
       # Mirror down addresses greater than 0x3fff
-      addr = @ppu_addr & 0x3fff
+      addr = @ppu_addr.to_i & 0x3fff
       val = @vram.read(addr)
-      @ppu_addr += @vram_addr_increment
+      @ppu_addr.add @vram_addr_increment
       buffered = @ppu_data_read_buffer
       @ppu_data_read_buffer = val
 
@@ -129,7 +135,9 @@ module Hongbai
     end
 
     def write_ppu_ctrl(_addr, val)
-      @name_table_base           = NAME_TABLE_BASE[val & 3]
+      @tmp_addr.nametable_x      = val[0]
+      @tmp_addr.nametable_y      = val[1]
+      #@name_table_base           = NAME_TABLE_BASE[val & 3]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
       @sprite_pattern_table_addr = val[3] * 2048 # 256 tiles * 8 rows per tile
       @bg_pattern_table_addr     = val[4] * 2048
@@ -146,7 +154,9 @@ module Hongbai
       @emphasize_red          = val[5] == 1
       @emphasize_green        = val[6] == 1
       @emphasize_blue         = val[7] == 1
-      @render_function = @render_functions[(val >> 3) & 3]
+      render_type = (val >> 3) & 3
+      @rendering_enabled = render_type.nonzero?
+      @render_function = @render_functions[render_type]
     end
 
     def write_oam_addr(_addr, val)
@@ -160,29 +170,36 @@ module Hongbai
 
     def write_ppu_scroll(_addr, val)
       if @toggle # toggle is true, the second write
-        @scroll_y = val
+        #@scroll_y = val
+        @tmp_addr.fine_y_offset = val & 7
+        @tmp_addr.coarse_y_offset = val >> 3
       else
-        @scroll_x = val
+        #@scroll_x = val
+        @fine_x_offset = val & 7
+        @tmp_addr.coarse_x_offset = val >> 3
       end
       @toggle = !@toggle
     end
 
     def write_ppu_addr(_addr, val)
       if @toggle
-        @ppu_addr = @ppu_addr & 0xff00 | val
+        #@ppu_addr = @ppu_addr & 0xff00 | val
+        @tmp_addr.update_lo val
+        @ppu_addr.copy @tmp_addr
       else
-        @ppu_addr = @ppu_addr & 0x00ff | (val << 8)
+        #@ppu_addr = @ppu_addr & 0x00ff | (val << 8)
         # This is a hack
-        @name_table_base = NAME_TABLE_BASE[(@ppu_addr >> 10) & 3]
+        #@name_table_base = NAME_TABLE_BASE[(@ppu_addr >> 10) & 3]
+        @tmp_addr.update_hi val
       end
       @toggle = !@toggle
     end
 
     def write_ppu_data(_addr, val)
       # Mirror down addresses greater than 0x3fff
-      addr = @ppu_addr & 0x3fff
+      addr = @ppu_addr.to_i & 0x3fff
       @vram.write(addr, val)
-      @ppu_addr += @vram_addr_increment
+      @ppu_addr.add @vram_addr_increment
     end
 
     private
@@ -286,53 +303,53 @@ module Hongbai
         # evaluate sprite info for next scanline
         sprite_evaluation
         # nametable y index
-        y_idx = ((@scroll_y + @scanline) / 8) % 30
+        #y_idx = ((@scroll_y + @scanline) / 8) % 30
         # nametable x index
-        x_idx = ((@scroll_x + @x) / 8) & 0x1f
-        nametable = @name_table_base
+        #x_idx = ((@scroll_x + @x) / 8) & 0x1f
+        #nametable = @name_table_base
 
-        tile_internal_y_offset = (@scroll_y  + @scanline) % 8
-        tile_internal_x_offset = @scroll_x % 8
+        #tile_internal_y_offset = (@scroll_y  + @scanline) % 8
+        #tile_internal_x_offset = @scroll_x % 8
 
-        unless tile_internal_x_offset.zero?
+        unless @fine_x_offset.zero? #tile_internal_x_offset.zero?
           first_tile = true
-          first = (tile_internal_x_offset..7)
-          last = (0...tile_internal_x_offset)
+          first = (@fine_x_offset..7)
+          last = (0...@fine_x_offset)
         end
 
         while @x < SCREEN_WIDTH
-          attribute = get_attribute(nametable, x_idx, y_idx)
-          tile_num = @vram.read(nametable + y_idx * 32 + x_idx)
-          pattern =
-            @pattern_table[@bg_pattern_table_addr + tile_num * 8 + tile_internal_y_offset][attribute]
+          #attribute = get_attribute(nametable, x_idx, y_idx)
+          #tile_num = @vram.read(nametable + y_idx * 32 + x_idx)
+          #pattern =
+          #  @pattern_table[@bg_pattern_table_addr + tile_num * 8 + tile_internal_y_offset][attribute]
+
+          read_nametable_byte
+          read_attr_byte
+          get_tile_low
+          get_tile_high
 
           if first
             if first_tile
-              @render_function[pattern, first]
+              @render_function[@pattern, first]
               first_tile = false
             elsif @x > 247
-              @render_function[pattern, last]
+              @render_function[@pattern, last]
               break
             else
-              @render_function[pattern]
+              @render_function[@pattern]
             end
           else
-            @render_function[pattern]
+            @render_function[@pattern]
           end
 
-          x_idx += 1
-          if x_idx == 32
-            # nametable change
-            # $2000 -> $2400 -> $2000
-            # $2800 -> $2C00 -> $2800
-            nametable ^= 0x400
-            x_idx = 0
-          end
+          @ppu_addr.coarse_x_increment if @rendering_enabled
         end
 
         # HBlank
         # fetch sprite tiles for the next scanline
         sprite_fetch
+        @ppu_addr.y_increment if @rendering_enabled
+        @ppu_addr.copy_x(@tmp_addr) if @rendering_enabled
         @x = 0
       end
 

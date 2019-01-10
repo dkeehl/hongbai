@@ -195,6 +195,8 @@ module Hongbai
       @prg_data
     end
 
+    def nop_write(_addr, _val); end
+
     def prg_write_method
       method :prg_write
     end
@@ -205,6 +207,7 @@ module Hongbai
 
     def chr_write_method
       method :chr_store
+      #method :nop_write
     end
   end
 end

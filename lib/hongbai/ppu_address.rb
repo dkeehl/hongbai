@@ -108,4 +108,33 @@ module Hongbai
 
     def to_i; @val end
   end
+
+  class TempAddress
+    def initialize
+      @nametable_x = 0
+      @nametable_y = 0
+      @coarse_x_offset = 0
+      @coarse_y_offset = 0
+      @fine_y_offset = 0
+    end
+
+    attr_accessor :nametable_x, :nametable_y, :coarse_x_offset, :coarse_y_offset, :fine_y_offset
+
+    def update_lo(val)
+      @coarse_x_offset = val & 0x1f
+      @coarse_y_offset = @coarse_y_offset & 0x18 | (val >> 5)
+    end
+
+    def update_hi(val)
+      @coarse_y_offset = @coarse_y_offset & 7 | ((val & 3) << 3)
+      @nametable_x = val[2]
+      @nametable_y = val[3]
+      @fine_y_offset = (val >> 4) & 3
+    end
+
+    def to_i
+      (@fine_y_offset << 12) | (@nametable_y << 11) | (@nametable_x << 10) |
+      (@coarse_y_offset << 5) | @coarse_x_offset
+    end
+  end
 end
