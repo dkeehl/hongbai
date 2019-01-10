@@ -12,7 +12,6 @@ module Hongbai
  
   class Ppu
     VRAM_ADDR_INC = [1, 32]
-    NAME_TABLE_BASE = [0x2000, 0x2400, 0x2800, 0x2c00]
 
     def initialize(rom, driver, context)
       @context = context
@@ -33,7 +32,6 @@ module Hongbai
 
       # Registers
       # PPU_CTRL
-      #@name_table_base = 0x2000
       @vram_addr_increment = 1
       @sprite_pattern_table_addr = 0
       @bg_pattern_table_addr = 0
@@ -44,7 +42,7 @@ module Hongbai
       @gray_scale = false
       @show_leftmost_8_bg = false
       @show_leftmost_8_sprite = false
-      @render_functions =               # $2001 bit 4 and bit 3
+      @render_functions =               # sprite(1: enable) background(1: enable)
         [method(:render_none),          # 00
          method(:render_bg),            # 01
          method(:render_sprite),        # 10
@@ -56,9 +54,6 @@ module Hongbai
       @emphasize_blue = false
       # PPU_STATUS
       @ppu_status = 0
-      # PPU_SCROLL
-      #@scroll_x = 0
-      #@scroll_y = 0
       # PPU_ADDR
       @ppu_addr = Address.new
       @tmp_addr = TempAddress.new
@@ -137,7 +132,6 @@ module Hongbai
     def write_ppu_ctrl(_addr, val)
       @tmp_addr.nametable_x      = val[0]
       @tmp_addr.nametable_y      = val[1]
-      #@name_table_base           = NAME_TABLE_BASE[val & 3]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
       @sprite_pattern_table_addr = val[3] * 2048 # 256 tiles * 8 rows per tile
       @bg_pattern_table_addr     = val[4] * 2048
@@ -170,11 +164,9 @@ module Hongbai
 
     def write_ppu_scroll(_addr, val)
       if @toggle # toggle is true, the second write
-        #@scroll_y = val
         @tmp_addr.fine_y_offset = val & 7
         @tmp_addr.coarse_y_offset = val >> 3
       else
-        #@scroll_x = val
         @fine_x_offset = val & 7
         @tmp_addr.coarse_x_offset = val >> 3
       end
@@ -183,13 +175,9 @@ module Hongbai
 
     def write_ppu_addr(_addr, val)
       if @toggle
-        #@ppu_addr = @ppu_addr & 0xff00 | val
         @tmp_addr.update_lo val
         @ppu_addr.copy @tmp_addr
       else
-        #@ppu_addr = @ppu_addr & 0x00ff | (val << 8)
-        # This is a hack
-        #@name_table_base = NAME_TABLE_BASE[(@ppu_addr >> 10) & 3]
         @tmp_addr.update_hi val
       end
       @toggle = !@toggle
@@ -302,14 +290,6 @@ module Hongbai
       def render_scanline
         # evaluate sprite info for next scanline
         sprite_evaluation
-        # nametable y index
-        #y_idx = ((@scroll_y + @scanline) / 8) % 30
-        # nametable x index
-        #x_idx = ((@scroll_x + @x) / 8) & 0x1f
-        #nametable = @name_table_base
-
-        #tile_internal_y_offset = (@scroll_y  + @scanline) % 8
-        #tile_internal_x_offset = @scroll_x % 8
 
         unless @fine_x_offset.zero? #tile_internal_x_offset.zero?
           first_tile = true
@@ -318,11 +298,6 @@ module Hongbai
         end
 
         while @x < SCREEN_WIDTH
-          #attribute = get_attribute(nametable, x_idx, y_idx)
-          #tile_num = @vram.read(nametable + y_idx * 32 + x_idx)
-          #pattern =
-          #  @pattern_table[@bg_pattern_table_addr + tile_num * 8 + tile_internal_y_offset][attribute]
-
           read_nametable_byte
           read_attr_byte
           get_tile_low
@@ -357,7 +332,6 @@ module Hongbai
         # push_bg returns true when sprite 0 hits.
         if @sprite_buffer.push_bg(bg_colors, range, @x)
           set_sprite_zero_hit(true)
-          #raise "frame #{@frame}, scanline #{@scanline}"
         end
         range.each { put_pixel(@sprite_buffer[@x]); @x += 1 }
       end
@@ -377,50 +351,47 @@ module Hongbai
         range.each { put_pixel(0); @x += 1 }
       end
 
+      # Pre-compute attributes for every address in a nametable
+      # with all 256 possible atribute bytes.
+      #
+      # Every 4*4 tiles share an attribute byte
+      # ________________
+      # |/|/|/|/|_|_|_|_
+      # |/|/|/|/|_|_|_|_
+      # |/|/|/|/|_|_|_|_
+      # |/|/|/|/|_|_|_|_
+      # |_|_|_|_|_|_|_|_
+      # |_|_|_|_|_|_|_|_
+      # |_|_|_|_|_|_|_|_
+      # | | | | | | | |
+      #
+      # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
+      # 4*4 tiles
+      #
+      # 7654 3210
+      # |||| ||++- topleft corner
+      # |||| ++--- topright corner
+      # ||++ ----- bottomleft corner
+      # ++-- ----- bottomright corner
       ATTR_TABLE = (0..0xff).map do |val|
-        # map each u8 value to an arrary of 32 * 32 = 960 attributes
-        arr = []
-        (0..31).each do |y| # y is 29 at the most, 30, 31 are not used
-          (0..31).each do |x|
-            arr[y * 32 + x] =
-              # Every 4*4 tiles share an attribute byte
-              # ________________
-              # |/|/|/|/|_|_|_|_
-              # |/|/|/|/|_|_|_|_
-              # |/|/|/|/|_|_|_|_
-              # |/|/|/|/|_|_|_|_
-              # |_|_|_|_|_|_|_|_
-              # |_|_|_|_|_|_|_|_
-              # |_|_|_|_|_|_|_|_
-              # | | | | | | | |
-              #
-              # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
-              # 4*4 tiles
-              #
-              # 7654 3210
-              # |||| ||++- topleft corner
-              # |||| ++--- topright corner
-              # ||++ ----- bottomleft corner
-              # ++-- ----- bottomright corner
-              if y % 4 < 2
-                if x % 4 < 2 # topleft
-                  val & 3
-                else # topright
-                  (val >> 2) & 3
-                end
-              else
-                if x % 4 < 2 # bottomleft
-                  (val >> 4) & 3
-                else # topright
-                  (val >> 6) & 3
-                end
-              end
+        (0..0x3ff).map do |pos|
+          y, x = pos.divmod(32)
+          if y % 4 < 2
+            if x % 4 < 2 # topleft
+              val & 3
+            else # topright
+              (val >> 2) & 3
+            end
+          else
+            if x % 4 < 2 # bottomleft
+              (val >> 4) & 3
+            else # topright
+              (val >> 6) & 3
+            end
           end
         end
-        arr
       end
 
-      # Ppu -> Integer -> Integer -> Integer -> Integer
       def get_attribute(nametable_base, x_idx, y_idx)
         # load the attribute
         offset = y_idx / 4 * 8 + x_idx / 4
