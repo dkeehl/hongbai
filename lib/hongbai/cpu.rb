@@ -400,7 +400,7 @@ module Hongbai
     end
 
     def set_zero_and_negative(result)
-      @p.zero = result.zero?
+      @p.zero = result == 0
       @p.negative = result[7] == 1
     end
 
@@ -511,7 +511,7 @@ module Hongbai
 
       @p.overflow = oper[6] == 1
       @p.negative = oper[7] == 1
-      @p.zero = result.zero?
+      @p.zero = result == 0
     end
 
     #8.BMI

@@ -158,7 +158,7 @@ module Hongbai
 
       def clock_frame_counter
         @cycles_until_next_step -= 1
-        if @cycles_until_next_step.zero?
+        if @cycles_until_next_step == 0
           this_step = @sequencer[@step]
 
           # quarter frames clock envelopes and triangle' linear counter
@@ -252,13 +252,13 @@ module Hongbai
     end
 
     def audible?
-      valid_period? && @envelope.volume.nonzero? && @length_counter.count.nonzero?
+      valid_period? && @envelope.volume != 0 && @length_counter.count != 0
     end
 
     def clock
-      if @timer.zero?
+      if @timer == 0
         # update wave form generator
-        @step.zero? ? @step = 7 : @step -= 1
+        @step == 0 ? @step = 7 : @step -= 1
         # reset timer
         @timer = @wave_length
       else
@@ -271,7 +271,7 @@ module Hongbai
     end
 
     def clock_sweep_unit
-      if @sweep_enabled && @sweep_counter.zero? && valid_period? && @sweep_shift.nonzero?
+      if @sweep_enabled && @sweep_counter == 0 && valid_period? && @sweep_shift != 0
         # adjust wave length
         if @sweep_negate
           @wave_length += @complement - (@wave_length >> @sweep_shift)
@@ -280,7 +280,7 @@ module Hongbai
         end
       end
 
-      if @sweep_reload || @sweep_counter.zero?
+      if @sweep_reload || @sweep_counter == 0
         @sweep_reload = false
         @sweep_counter = @sweep_period
       else
@@ -325,10 +325,10 @@ module Hongbai
         @decay_level = 15
         @counter = @envelope_parameter
       else
-        if @counter.zero?
+        if @counter == 0
           @counter = @envelope_parameter
           # clocks the decay level counter
-          if @decay_level.zero?
+          if @decay_level == 0
             @decay_level = 15 if @loop
           else
             @decay_level -= 1
@@ -370,7 +370,7 @@ module Hongbai
     end
 
     def clock
-      @count -= 1 unless @halt || @count.zero?
+      @count -= 1 unless @halt || @count == 0
     end
   end
 
@@ -412,9 +412,9 @@ module Hongbai
     end
 
     def clock
-      if @timer.zero?
+      if @timer == 0
         @timer = @period
-        if @linear_counter.nonzero? && @length_counter.count.nonzero?
+        if @linear_counter != 0 && @length_counter.count != 0
           @step = (@step + 1) % 32
         end
       else
@@ -429,14 +429,14 @@ module Hongbai
     def clock_linear_counter
       if @linear_counter_reload
         @linear_counter = @counter_reload_value
-      elsif @linear_counter.nonzero?
+      elsif @linear_counter != 0
         @linear_counter -= 1
       end
       @linear_counter_reload = false unless @control
     end
 
     def silenced?
-      @linear_counter.zero? || @length_counter.count.zero? || @period < 2
+      @linear_counter == 0 || @length_counter.count == 0 || @period < 2
     end
 
     def sample
@@ -476,7 +476,7 @@ module Hongbai
     end
 
     def clock
-      if @timer.zero?
+      if @timer == 0
         @timer = @period
         # clock shift register
         feedback = @shift[0] ^ @shift[@mode ? 6 : 1]
@@ -495,7 +495,7 @@ module Hongbai
     end
 
     def silenced?
-      @shift[0] == 1 || @length_counter.count.zero?
+      @shift[0] == 1 || @length_counter.count == 0
     end
 
     def sample
@@ -539,7 +539,7 @@ module Hongbai
       @enabled = b
       if !@enabled
         @bytes_remaining = 0
-      elsif @bytes_remaining.zero?
+      elsif @bytes_remaining == 0
         @current_address = @sample_address
         @bytes_remaining = @sample_length
       end
@@ -570,12 +570,12 @@ module Hongbai
 
     def clock
       @timer -= 1
-      if @timer.zero?
+      if @timer == 0
         @timer = @rate
         update_output unless @silence
         @shift >> 1
         @bits_remaining -= 1
-        new_cycle if @bits_remaining.zero?
+        new_cycle if @bits_remaining == 0
       end
     end
 
@@ -584,7 +584,7 @@ module Hongbai
     end
 
     def should_activate_dma?
-      @sample_buffer.nil? && @bytes_remaining.nonzero?
+      @sample_buffer.nil? && @bytes_remaining != 0
     end
 
     def dma_write(val)
@@ -592,7 +592,7 @@ module Hongbai
       @current_address += 1
       @current_address -= 0x8000 if @current_address > 0xffff
       @bytes_remaining -= 1
-      if @bytes_remaining.zero?
+      if @bytes_remaining == 0
         if @loop
           @current_address = @sample_address
           @bytes_remaining = @sample_length
@@ -604,7 +604,7 @@ module Hongbai
 
     private
       def update_output
-        if @shift[0].zero?
+        if @shift[0] == 0
           @output -= 2 unless @output < 2
         else
           @output += 2 unless @output > 125
@@ -624,8 +624,8 @@ module Hongbai
   end
 
   class Mixer
-    PULSE_TABLE = (0..30).map {|n| n.zero? ? 0 : 95.52 / (8128.0 / n + 100) }
-    TND_TABLE = (0..202).map {|n| n.zero? ? 0 : 163.67 / (24329.0 / n + 100) }
+    PULSE_TABLE = (0..30).map {|n| n == 0 ? 0 : 95.52 / (8128.0 / n + 100) }
+    TND_TABLE = (0..202).map {|n| n == 0 ? 0 : 163.67 / (24329.0 / n + 100) }
 
     def initialize(pulse_1, pulse_2, triangle, noise, dmc)
       @pulse_1 = pulse_1

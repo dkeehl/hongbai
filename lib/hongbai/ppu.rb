@@ -79,7 +79,7 @@ module Hongbai
     attr_writer :trace
 
     def run_main_loop
-      loop do
+      while true do
         @ppu_addr.copy @tmp_addr if @rendering_enabled
         # scanline 0 to 239
         0.step(239) do
@@ -149,7 +149,7 @@ module Hongbai
       @emphasize_green        = val[6] == 1
       @emphasize_blue         = val[7] == 1
       render_type = (val >> 3) & 3
-      @rendering_enabled = render_type.nonzero?
+      @rendering_enabled = render_type != 0
       @render_function = @render_functions[render_type]
     end
 
@@ -297,7 +297,7 @@ module Hongbai
       def render_bg_and_sprite
         bg_color = @bg_buffer[@fine_x_offset]
         if @sprite_buffer.push_point(bg_color, @x)
-          set_sprite_zero_hit(true)
+          set_sprite_zero_hit
         end
         @sprite_buffer[@x]
       end
@@ -406,7 +406,7 @@ module Hongbai
         end
 
         n = 1
-        loop do
+        while true do
           y = @oam[n * 4]
           @oam2.insert(y)
           if sprite_on_scanline(y)
@@ -422,7 +422,7 @@ module Hongbai
         while n < 64
           y = @oam[n * 4 + m]
           if sprite_on_scanline(y)
-            set_sprite_overflow(true)
+            set_sprite_overflow
             break
           else
             n += 1
@@ -480,27 +480,27 @@ module Hongbai
         @output_offset += 1
       end
 
-      def set_in_vblank(b)
-        b ? @ppu_status |= 0x80 : @ppu_status &= 0x7f
+      def set_sprite_zero_hit
+        @ppu_status |= 0x40
       end
 
-      def set_sprite_zero_hit(b)
-        b ? @ppu_status |= 0x40 : @ppu_status &= 0xbf
-      end
-
-      def set_sprite_overflow(b)
-        b ? @ppu_status |= 0x20 : @ppu_status &= 0xdf
+      def set_sprite_overflow
+        @ppu_status |= 0x20
       end
 
       def set_vblank_start
-        set_in_vblank(true)
+        # set_in_vblank to 1
+        @ppu_status |= 0x80
       end
 
       # Ppu -> Nil
       def set_vblank_end
-        set_in_vblank(false)
-        set_sprite_zero_hit(false)
-        set_sprite_overflow(false)
+        # set in vblank to 0
+        @ppu_status &= 0x7f
+        # clear sprite_zero_hit flag
+        @ppu_status &= 0xbf
+        # clear sprite overflow flag
+        @ppu_status &= 0xdf
       end
   end
 
@@ -594,7 +594,7 @@ module Hongbai
 
         attributes = @arr[count * 4 + 2]
         attr = (attributes & 3) + 4
-        prior = (attributes & 0x20).zero?
+        prior = (attributes & 0x20) == 0
         flip_h = (attributes & 0x40) != 0
         flip_v = (attributes & 0x80) != 0
         return tile, attr, flip_h, flip_v, x, y, prior
@@ -671,7 +671,7 @@ module Hongbai
       i = x_offset
       colors.each do |c|
         item = @items[i]
-        if item && (item.color.zero? || (above_bg && !item.above_bg))
+        if item && (item.color == 0 || (above_bg && !item.above_bg))
           item.color = c
           item.from_sprite_0 = from_sprite_0
           item.above_bg = above_bg
@@ -682,8 +682,8 @@ module Hongbai
 
     def push_point(color, x_offset)
       item = @items[x_offset]
-      hit = item.from_sprite_0 && item.color.nonzero? && color.nonzero? && x_offset != 255
-      item.color = color unless item.color.nonzero? && item.above_bg || color.zero?
+      hit = item.from_sprite_0 && item.color != 0 && color != 0 && x_offset != 255
+      item.color = color unless item.color != 0 && item.above_bg || color == 0
       hit
     end
   end
