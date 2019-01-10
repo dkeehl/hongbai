@@ -320,7 +320,7 @@ module Hongbai
       hi = @m.read(@pc + 2) << 8
       sum = lo + @x
       @operand_addr = hi | (sum & 0xff)
-      @address_carry = sum > 0xff
+      @address_carry = sum & 0x100
       @pc += 3
     end
 
@@ -329,7 +329,7 @@ module Hongbai
       hi = @m.read(@pc + 2) << 8
       sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
-      @address_carry = sum > 0xff
+      @address_carry = sum & 0x100
       @pc += 3
     end
 
@@ -354,7 +354,7 @@ module Hongbai
       hi = @m.read(addr_addr + 1) << 8
       sum = lo + @y
       @operand_addr = hi | (sum & 0xff)
-      @address_carry = sum > 0xff
+      @address_carry = sum & 0x100
     end
 
     def accumulator
@@ -376,15 +376,14 @@ module Hongbai
 
     def fix_address
       @m.read(@operand_addr)
-      @operand_addr = (@operand_addr + 0x100) & 0xffff if @address_carry
+      @operand_addr = (@operand_addr + @address_carry) & 0xffff
       @address_carry = nil
     end
 
     def read_or_fix_read
       val = @m.read(@operand_addr)
-      if @address_carry.nil?
-        return val
-      elsif @address_carry
+      return val unless @address_carry
+      if @address_carry != 0
         @operand_addr = (@operand_addr + 0x100) & 0xffff
         val = @m.read(@operand_addr)
       end
@@ -462,14 +461,14 @@ module Hongbai
 
     #3.ASL
     def asl
-      if @operand_addr.nil?
-        result = @a << 1
-        @a = result & 0xff
-      else
-        fix_address unless @address_carry.nil?
+      if @operand_addr
+        fix_address if @address_carry
         oper = @m.read(@operand_addr)
         result = oper << 1
         update(oper, result & 0xff)
+      else
+        result = @a << 1
+        @a = result & 0xff
       end
 
       set_carry(result)
@@ -595,7 +594,7 @@ module Hongbai
 
     #21.DEC
     def dec
-      fix_address unless @address_carry.nil?
+      fix_address if @address_carry
       oper = @m.fetch(@operand_addr)
       result = (oper - 1) & 0xff
       set_zero_and_negative(result)
@@ -626,7 +625,7 @@ module Hongbai
 
     #25.INC
     def inc
-      fix_address unless @address_carry.nil?
+      fix_address if @address_carry
       oper = @m.fetch(@operand_addr)
       result = (oper + 1) & 0xff
       set_zero_and_negative(result)
@@ -679,16 +678,16 @@ module Hongbai
 
     #33.Logical Shift Right
     def lsr
-      if @operand_addr.nil?
-        result = @a >> 1
-        @p.carry = @a & 1 == 1
-        @a = result
-      else
-        fix_address unless @address_carry.nil?
+      if @operand_addr
+        fix_address if @address_carry
         oper = @m.fetch(@operand_addr)
         @p.carry = oper & 1 == 1
         result = oper >> 1
         update(oper, result)
+      else
+        result = @a >> 1
+        @p.carry = @a & 1 == 1
+        @a = result
       end
 
       set_zero_and_negative(result)
@@ -730,14 +729,14 @@ module Hongbai
 
     #40.Rotate Left
     def rol
-      if @operand_addr.nil?
-        result = @a << 1 | (@p.carry ? 1 : 0)
-        @a = result & 0xff
-      else
-        fix_address unless @address_carry.nil?
+      if @operand_addr
+        fix_address if @address_carry
         oper = @m.read(@operand_addr)
         result = oper << 1 | (@p.carry ? 1 : 0)
         update(oper, result & 0xff)
+      else
+        result = @a << 1 | (@p.carry ? 1 : 0)
+        @a = result & 0xff
       end
 
       set_carry(result)
@@ -746,16 +745,16 @@ module Hongbai
 
     #41.Rotate Right
     def ror
-      if @operand_addr.nil?
-        result = (@p.value & 1) << 7 | @a >> 1
-        @p.carry = @a & 1 == 1
-        @a = result
-      else
-        fix_address unless @address_carry.nil?
+      if @operand_addr
+        fix_address if @address_carry
         data = @m.fetch(@operand_addr)
         result = (@p.value & 1) << 7 | data >> 1
         @p.carry = data & 1 == 1
         update(data, result)
+      else
+        result = (@p.value & 1) << 7 | @a >> 1
+        @p.carry = @a & 1 == 1
+        @a = result
       end
 
       set_zero_and_negative(result)
@@ -813,7 +812,7 @@ module Hongbai
 
     #48.Store the Accumulator in Memory
     def sta
-      fix_address unless @address_carry.nil?
+      fix_address if @address_carry
       @m.load(@operand_addr, @a)
     end
 
