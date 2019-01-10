@@ -23,7 +23,7 @@ module Hongbai
       @oam2 = Oam2.new
       # A buffer that computes color priority and checks sprite 0 hit.
       @sprite_buffer = Output.new
-      @bg_buffer = Array.new(8 * 2, 0xffffffff)
+      @bg_buffer = Array.new(8 * 2, 0)
       
       # Rendering latches
       @tile_num = 0xff
@@ -54,7 +54,7 @@ module Hongbai
       @emphasize_blue = false
       # PPU_STATUS
       @ppu_status = 0
-      # PPU_ADDR
+      # PPU_ADDR & PPU_SCROLL
       @ppu_addr = Address.new
       @tmp_addr = TempAddress.new
       @fine_x_offset = 0
@@ -75,7 +75,7 @@ module Hongbai
       @trace = false
     end
 
-    attr_reader :frame, :scanline, :main_loop
+    attr_reader :main_loop
     attr_writer :trace
 
     def run_main_loop
@@ -157,7 +157,6 @@ module Hongbai
       @oam.addr = val
     end
 
-    # Public for OAM DMA
     def write_oam_data(_addr, val)
       @oam.write val
     end
@@ -273,11 +272,6 @@ module Hongbai
         @tile_num = @vram.read(@ppu_addr.tile)
       end
 
-      def read_attr_byte
-        byte = @vram.read(@ppu_addr.attribute)
-        @attribute = ATTR_TABLE[byte][@ppu_addr.to_i & 0x3ff]
-      end
-
       def get_tile_low
         # Not really do a memory fetch, just determine the address of the pattern
         @pattern_addr = @bg_pattern_table_addr + @tile_num * 8 + @ppu_addr.fine_y_offset
@@ -287,36 +281,61 @@ module Hongbai
         @pattern = @pattern_table[@pattern_addr][@attribute]
       end
 
+      def reload_shift_register
+        @bg_buffer[8, 8] = @pattern
+      end
+
+      def draw_8_points
+        8.times do
+          color_index = @render_function.call
+          put_pixel color_index
+          @bg_buffer.shift
+          @x += 1
+        end
+      end
+
+      def render_bg_and_sprite
+        bg_color = @bg_buffer[@fine_x_offset]
+        if @sprite_buffer.push_point(bg_color, @x)
+          set_sprite_zero_hit(true)
+        end
+        @sprite_buffer[@x]
+      end
+
+      def render_bg
+        @bg_buffer[@fine_x_offset]
+      end
+
+      def render_sprite
+        @sprite_buffer[@x]
+      end
+
+      def render_none; 0 end
+
+      def fetch_pattern
+        read_nametable_byte
+        read_attr_byte
+        get_tile_low
+        get_tile_high
+        @ppu_addr.coarse_x_increment if @rendering_enabled
+      end
+
       def render_scanline
+        fetch_pattern
+        @bg_buffer[0, 8] = @pattern
+        fetch_pattern
+        @bg_buffer[8, 8] = @pattern
+
         # evaluate sprite info for next scanline
         sprite_evaluation
 
-        unless @fine_x_offset.zero? #tile_internal_x_offset.zero?
-          first_tile = true
-          first = (@fine_x_offset..7)
-          last = (0...@fine_x_offset)
-        end
-
-        while @x < SCREEN_WIDTH
+        32.times do
+          draw_8_points
           read_nametable_byte
           read_attr_byte
           get_tile_low
           get_tile_high
-
-          if first
-            if first_tile
-              @render_function[@pattern, first]
-              first_tile = false
-            elsif @x > 247
-              @render_function[@pattern, last]
-              break
-            else
-              @render_function[@pattern]
-            end
-          else
-            @render_function[@pattern]
-          end
-
+          reload_shift_register
           @ppu_addr.coarse_x_increment if @rendering_enabled
         end
 
@@ -326,29 +345,6 @@ module Hongbai
         @ppu_addr.y_increment if @rendering_enabled
         @ppu_addr.copy_x(@tmp_addr) if @rendering_enabled
         @x = 0
-      end
-
-      def render_bg_and_sprite(bg_colors, range = (0..7))
-        # push_bg returns true when sprite 0 hits.
-        if @sprite_buffer.push_bg(bg_colors, range, @x)
-          set_sprite_zero_hit(true)
-        end
-        range.each { put_pixel(@sprite_buffer[@x]); @x += 1 }
-      end
-
-      def render_bg(bg_colors, range = (0..7))
-        # Sprite rendering is disabled.
-        range.each {|i| put_pixel(bg_colors[i]); @x += 1 }
-      end
-
-      def render_sprite(bg_colors, range = (0..7))
-        # Background rendering is disabled.
-        range.each { put_pixel(@sprite_buffer[@x]); @x += 1 }
-      end
-
-      def render_none(_bg_colors, range = (0..7))
-        # Both background and pixel rendering are disabled.
-        range.each { put_pixel(0); @x += 1 }
       end
 
       # Pre-compute attributes for every address in a nametable
@@ -392,11 +388,9 @@ module Hongbai
         end
       end
 
-      def get_attribute(nametable_base, x_idx, y_idx)
-        # load the attribute
-        offset = y_idx / 4 * 8 + x_idx / 4
-        attr_byte = @vram.read(nametable_base + 0x3c0 + offset)
-        ATTR_TABLE[attr_byte][y_idx * 32 + x_idx]
+      def read_attr_byte
+        byte = @vram.read(@ppu_addr.attribute)
+        @attribute = ATTR_TABLE[byte][@ppu_addr.to_i & 0x3ff]
       end
 
       # Ppu -> nil
@@ -448,7 +442,6 @@ module Hongbai
       # read oam2 data to buffer
       def sprite_fetch
         @sprite_buffer.clear
-        @sprite_buffer.may_hit_sprite_0 = @oam2.has_sprite_zero
 
         @oam2.each_sprite do |tile, attr, flip_h, flip_v, x, y, prior, sprite0|
           y_inter = @scanline - y
@@ -534,23 +527,6 @@ module Hongbai
 
     def []=(n, x)
       @arr[n] = x
-    end
-    
-    def to_s
-      str = ""
-      i = 0
-      while i < 64
-        y = @arr[i * 4]
-        if y > 240 || y.zero?
-          break
-        else
-          num = @arr[i * 4 + 1]
-          x = @arr[i * 4 + 3]
-          str += "\##{num} (#{x}, #{y}) "
-          i += 1
-        end
-      end
-      str
     end
   end
 
@@ -671,14 +647,12 @@ module Hongbai
     Item = Struct.new(:color, :from_sprite_0, :above_bg)
 
     def initialize
-      @may_hit_sprite_0 = false
       @items = Array.new(SCREEN_WIDTH) { Item.new(0, nil, nil) }
     end
 
     attr_accessor :may_hit_sprite_0
 
     def clear
-      @may_hit_sprite_0 = false
       @items.each do |i|
         i.color = 0 
         i.from_sprite_0 = nil
@@ -706,42 +680,12 @@ module Hongbai
       end
     end
 
-    # Output -> Array<ColorIndex> -> Range -> Integer -> Bool
-    # Return true if sprite 0 hits, return false otherwise.
-    def push_bg(colors, range, x_offset)
-      i = x_offset
-      if @may_hit_sprite_0
-        # Only checks when sprite 0 is included in this render
-        hit = false
-        range.each do |n|
-          item = @items[i]
-          c = colors[n]
-          if item.from_sprite_0 && !item.color.zero? && !c.zero? && i != 255
-            hit = true
-          end
-          push_bg_color(c, i)
-          i += 1
-        end
-        hit
-      else
-        range.each do |n|
-          c = colors[n]
-          push_bg_color(c, i)
-          i += 1
-        end
-        false
-      end
+    def push_point(color, x_offset)
+      item = @items[x_offset]
+      hit = item.from_sprite_0 && item.color.nonzero? && color.nonzero? && x_offset != 255
+      item.color = color unless item.color.nonzero? && item.above_bg || color.zero?
+      hit
     end
-
-    private
-      # Output -> ColorIndex -> Integer -> Nil
-      # Insert a background color at the index
-      def push_bg_color(color, index)
-        item = @items[index]
-        unless !item.color.zero? && item.above_bg || color.zero?
-          @items[index].color = color
-        end
-      end
   end
 
   class Palette
