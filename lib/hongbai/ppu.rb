@@ -653,7 +653,8 @@ module Hongbai
     attr_accessor :may_hit_sprite_0
 
     def clear
-      @items.each do |i|
+      0.step(255) do |n|
+        i = @items[n]
         i.color = 0 
         i.from_sprite_0 = nil
         i.above_bg = nil
@@ -665,11 +666,10 @@ module Hongbai
       @items[n].color
     end
 
-    # Output -> Array<ColorIndex> -> Integer -> Bool -> Bool -> Nil
-    # where colors.length == 8
-    def push_sprite(colors, x_offset, above_bg, from_sprite_0)
+    def push_sprite(pattern, x_offset, above_bg, from_sprite_0)
       i = x_offset
-      colors.each do |c|
+      0.step(7) do |n|
+        c = pattern[n]
         item = @items[i]
         if item && (item.color == 0 || (above_bg && !item.above_bg))
           item.color = c
