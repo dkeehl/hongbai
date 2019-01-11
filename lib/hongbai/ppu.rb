@@ -89,14 +89,16 @@ module Hongbai
         end
 
         # scanline 240
+        @scanline += 1
         Fiber.yield
 
         # scanline 241
         set_vblank_start
+        @scanline += 1
         Fiber.yield(@generate_vblank_nmi)
 
         # scanline 242 to 260
-        242.step(260) { Fiber.yield }
+        242.step(260) { @scanline += 1; Fiber.yield }
 
         # pre-render line
         set_vblank_end
@@ -401,16 +403,16 @@ module Hongbai
         y = @oam[0]
         @oam2.insert(y)
         if sprite_on_scanline(y)
-          1.upto(3) { |i| @oam2.push(@oam[i]) }
+          1.step(3) { |i| @oam2.push(@oam[i]) }
           @oam2.has_sprite_zero = true
         end
 
         n = 1
-        while true do
+        loop do
           y = @oam[n * 4]
           @oam2.insert(y)
           if sprite_on_scanline(y)
-            1.upto(3) { |i| @oam2.push(@oam[n * 4 + i]) }
+            1.step(3) { |i| @oam2.push(@oam[n * 4 + i]) }
           end
           n += 1
           return if n == 64
@@ -448,23 +450,15 @@ module Hongbai
           if !@sprite_8x16_mode
             # 8*8 sprite mode
             tile += @sprite_pattern_table_addr
-            y_inter = flip_v ? 7 - y_inter : y_inter
-            colors = @pattern_table[tile * 8 + y_inter][attr]
+            y_inter = 7 - y_inter if flip_v
           else
             # 8*16 sprite mode
             tile = Ppu.to_8x16_sprite_tile_addr(tile)
-            if y_inter <= 7 && !flip_v || y_inter > 7 && flip_v
-              y_inter = flip_v ? 15 - y_inter : y_inter
-              colors = @pattern_table[tile * 8 + y_inter][attr]
-            else
-              y_inter = flip_v ? 7 - y_inter : y_inter % 8
-              colors = @pattern_table[(tile + 1) * 8 + y_inter][attr]
-            end
+            y_inter = 15 - y_inter if flip_v
           end
 
-          if flip_h
-            colors = colors.reverse
-          end
+          colors = @pattern_table[tile * 8 + y_inter][attr]
+          colors = colors.reverse if flip_h
           @sprite_buffer.push_sprite(colors, x, prior, sprite0)
         end
       end
@@ -594,9 +588,9 @@ module Hongbai
 
         attributes = @arr[count * 4 + 2]
         attr = (attributes & 3) + 4
-        prior = (attributes & 0x20) == 0
-        flip_h = (attributes & 0x40) != 0
-        flip_v = (attributes & 0x80) != 0
+        prior = attributes[5] == 0
+        flip_h = attributes[6] == 1
+        flip_v = attributes[7] == 1
         return tile, attr, flip_h, flip_v, x, y, prior
       end
   end

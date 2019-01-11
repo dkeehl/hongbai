@@ -37,17 +37,20 @@ module Hongbai
     end
 
     def switch_h
-      self.nametable_x ^= 1
+      #self.nametable_x ^= 1
+      @val ^= 0b100_0000_0000
     end
 
     def switch_v
-      self.nametable_y ^= 1
+      #self.nametable_y ^= 1
+      @val ^= 0b1000_0000_0000
     end
 
     def coarse_x_increment
       if self.coarse_x_offset == 31
-        self.coarse_x_offset = 0
-        switch_h
+        # self.coarse_x_offset = 0
+        # switch_h
+        @val ^= 0b100_0001_1111
       else
         @val += 1
       end
@@ -56,17 +59,22 @@ module Hongbai
     def y_increment
       fine_y = self.fine_y_offset
       if fine_y < 7
-        self.fine_y_offset = fine_y + 1
+        # self.fine_y_offset = fine_y + 1
+        @val += 0x1000
       else
-        self.fine_y_offset = 0
+        # self.fine_y_offset = 0
+        @val &= 0xfff
         y = self.coarse_y_offset
         if y == 29
-          self.coarse_y_offset = 0
-          switch_v
+          # self.coarse_y_offset = 0
+          # switch_v
+          @val ^= 0b1011_1010_0000
         elsif y == 31
-          self.coarse_y_offset = 0
+          # self.coarse_y_offset = 0
+          @val ^= 0b11_1110_0000
         else
-          self.coarse_y_offset = y + 1
+          # self.coarse_y_offset = y + 1
+          @val += 32
         end
       end
     end
@@ -91,6 +99,11 @@ module Hongbai
       0x2000 | (@val & 0xfff)
     end
 
+    ATTR_ADDRS = (0..0xfff).map do |pos|
+      y, x = pos.divmod(32)
+      (y / 4) * 8 + (x / 4)
+    end
+
     # Into the address of the tile's attribute
     # NN11 11YY YXXX
     # |||| |||| |+++ - high 3 bits of coarse x
@@ -99,7 +112,7 @@ module Hongbai
     # ++-- ---- ---- - nametable
     def attribute
       0x23c0 | (@val & 0xc00) | # 0xc00 takes the 2 nametable bits
-      ((self.coarse_y_offset << 1) & 0x38) | (self.coarse_x_offset >> 2)
+      ATTR_ADDRS[@val & 0xfff]
     end
 
     def add(n)

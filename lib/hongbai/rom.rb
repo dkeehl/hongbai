@@ -159,10 +159,12 @@ module Hongbai
 
       # pre-compute the pattern table with all 8 possible attributes
       @pattern_table = (0..0xfff).map {|pattern| build_pattern pattern }
+      @allow_write_to_rom = false
     end
 
     attr_reader :pattern_table
 
+    # pattern in (0..0xfff) -> Array<8, 8>
     def build_pattern(pattern)
       tile_num, fine_y  = pattern.divmod(8)
       panel_0_addr = tile_num * 16 + fine_y
@@ -185,7 +187,6 @@ module Hongbai
     def chr_store(addr, val)
       # Chr rom is not modified in normal situations.
       # Once this method is called, we need to update the cached pattern table.
-      STDERR.puts "Warn: Writing to CHR ROM"
       @chr_rom[addr] = val
       pattern = addr / 2 + addr % 8
       @pattern_table[pattern] = build_pattern(pattern)
@@ -195,7 +196,9 @@ module Hongbai
       @prg_data
     end
 
-    def nop_write(_addr, _val); end
+    def nop_write(_addr, _val)
+      STDERR.puts "Warn: Writing to CHR ROM"
+    end
 
     def prg_write_method
       method :prg_write
@@ -206,8 +209,7 @@ module Hongbai
     end
 
     def chr_write_method
-      method :chr_store
-      #method :nop_write
+      @allow_write_to_rom ? method(:chr_store) : method(:nop_write)
     end
   end
 end
