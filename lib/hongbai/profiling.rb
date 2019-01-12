@@ -33,11 +33,7 @@ module Hongbai
       win = Dummy::Window.new
       video = Dummy::Video.new(win)
       input = Dummy::Input.new
-      ppu = Ppu.new(rom, video)
-      apu = Apu.new
-      mem = Memory.new(apu, ppu, rom, input)
-      cpu = Cpu.new(mem)
-      new(cpu, ppu, apu, mem, input)
+      new(rom, video, input)
     end
   end
 
