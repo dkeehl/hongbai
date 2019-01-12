@@ -323,6 +323,7 @@ module Hongbai
       end
 
       def render_scanline
+        @ppu_addr.copy_x(@tmp_addr) if @rendering_enabled
         fetch_pattern
         @bg_buffer[0, 8] = @pattern
         fetch_pattern
@@ -345,7 +346,6 @@ module Hongbai
         # fetch sprite tiles for the next scanline
         sprite_fetch
         @ppu_addr.y_increment if @rendering_enabled
-        @ppu_addr.copy_x(@tmp_addr) if @rendering_enabled
         @x = 0
       end
 
