@@ -6,7 +6,6 @@ module Hongbai
   SCREEN_HEIGHT = 240
 
   # TODO:
-  # ** Odd and even frames
   # ** Leftmost pixles render control
   # ** Color emphasize and grey scale display
  
@@ -80,8 +79,16 @@ module Hongbai
 
     def run_main_loop
       while true do
-        # scanline 0 to 239
-        0.step(239) do
+        # scanline 0 to 239, the visible scanlines
+         
+        # scanline 0
+        # cycle 0 is skipped on odd cycles when rendering is enabled
+        Fiber.yield if @even_frame || !@rendering_enabled
+        visible_scanline
+        @scanline += 1
+        1.step(239) do
+          # cycle 0, idle
+          Fiber.yield
           visible_scanline
           @scanline += 1
         end
@@ -223,10 +230,8 @@ module Hongbai
       end
 
       def visible_scanline
-        # 341 cycles in total
-        # cycle 0, idle
+        # last 340 cycles of 341 cycles in total
         @x = 0
-        Fiber.yield
         # cycle 1-8
         scanline_cycle_1_to_8
         # cycle 9-64
