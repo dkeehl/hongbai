@@ -118,7 +118,9 @@ module Hongbai
 
     def read_ppu_status(_addr)
       @toggle = false
-      @ppu_status
+      ret = @ppu_status
+      @ppu_status &= 0x7f # clear the vblank flag
+      ret
     end
 
     def read_ppu_data(_addr)
@@ -138,10 +140,15 @@ module Hongbai
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
       @sprite_pattern_table_addr = val[3] * 2048 # 256 tiles * 8 rows per tile
       @bg_pattern_table_addr     = val[4] * 2048
-      @sprite_8x16_mode          = val[5] == 1
-      @generate_vblank_nmi       = val[7] == 1
 
+      @sprite_8x16_mode = val[5] == 1
       @sprite_height = @sprite_8x16_mode ? 16 : 8
+
+      vblank_orig = @generate_vblank_nmi
+      @generate_vblank_nmi = val[7] == 1
+      if !vblank_orig && @generate_vblank_nmi && @ppu_status[7] == 1
+        @context.nmi = true
+      end
     end
 
     def write_ppu_mask(_addr, val)
