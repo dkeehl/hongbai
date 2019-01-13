@@ -92,6 +92,9 @@ module Hongbai
       def on_cpu_cycle
         @cycle += 1
         #@apu.step
+        @ppu.main_loop.resume
+        @ppu.main_loop.resume
+        @ppu.main_loop.resume
       end
 
       def read_mirror_ram(addr)

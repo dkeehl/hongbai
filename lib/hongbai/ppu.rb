@@ -80,34 +80,28 @@ module Hongbai
 
     def run_main_loop
       while true do
-        @ppu_addr.copy @tmp_addr if @rendering_enabled
         # scanline 0 to 239
         0.step(239) do
-          render_scanline
+          visible_scanline
           @scanline += 1
-          Fiber.yield
         end
 
         # scanline 240
-        @scanline += 1
-        Fiber.yield
+        idle_scanline
 
         # scanline 241
-        set_vblank_start
-        @scanline += 1
-        Fiber.yield(@generate_vblank_nmi)
+        vblank_scanline
 
         # scanline 242 to 260
-        242.step(260) { @scanline += 1; Fiber.yield }
+        242.step(260) { idle_scanline }
 
         # pre-render line
-        set_vblank_end
         @renderer.display @output
         @output_offset = 0
         @scanline = 0
         @even_frame = !@even_frame
         @context.on_new_frame
-        Fiber.yield
+        pre_render_scanline
       end
     end
 
@@ -192,82 +186,177 @@ module Hongbai
     end
 
     private
+      def idle_scanline
+        0.step(340) { Fiber.yield }
+      end
+
+      def vblank_scanline
+        Fiber.yield
+        set_vblank_start
+        @context.nmi = @generate_vblank_nmi
+        1.step(340) { Fiber.yield }
+      end
+
       def pre_render_scanline
+        # cycle 0, idle
+        Fiber.yield
+        # cycle 1
+        set_vblank_end
+        1.step(255) { Fiber.yield }
         # cycle 256
-        ppu_addr_incr_y
+        @ppu_addr.y_increment if @rendering_enabled
+        Fiber.yield
         # cycle 257
-        ppu_addr_copy_hor
+        @ppu_addr.copy_x @tmp_addr if @rendering_enabled
+        Fiber.yield
+
+        258.step(279) { Fiber.yield }
         # cycle 280-304
-        ppu_addr_copy_ver
-        321.step(336, 8) do
-          read_nametable_byte
-          read_attr_byte
-          get_tile_low
-          get_tile_high
-          reload_shift_register
-          ppu_addr_inc_x
+        280.step(304) do
+          @ppu_addr.copy_y @tmp_addr if @rendering_enabled
+          Fiber.yield
         end
+
+        305.step(320) { Fiber.yield }
+        scanline_cycle_321_to_336
+        scanline_cycle_337_to_340
       end
 
       def visible_scanline
         # 341 cycles in total
         # cycle 0, idle
-        # cycle 1, wait_cycle
-        # cycle 2, sprite 0 hit starts here
-        read_nametable_byte
-        # cycle 3-4
-        read_attr_byte
-        # cycle 5-6
-        get_tile_low
-        # cycle 7-8
-        get_tile_high
-        reload_shift_register
-        ppu_addr_inc_x
+        @x = 0
+        Fiber.yield
+        # cycle 1-8
+        scanline_cycle_1_to_8
         # cycle 9-64
         9.step(64, 8) do
-          read_nametable_byte
-          read_attr_byte
-          get_tile_low
-          get_tile_high
-          reload_shift_register
-          ppu_addr_inc_x
+          scanline_cycle_9_to_64
         end
         # In fact this happens during cycle 1-64
         @oam2.init
         # cycle 65-256, with sprite evaluation
         65.step(256, 8) do
-          read_nametable_byte
-          read_attr_byte
-          get_tile_low
-          get_tile_high
-          reload_shift_register
-          ppu_addr_inc_x
+          scanline_cycle_65_to_256
         end
         # still in cycle 256
-        ppu_addr_inc_y
+        # FIXME: should yield here
+        sprite_evaluation
+        @ppu_addr.y_increment if @rendering_enabled
         # cycle 257
-        ppu_addr_copy_hor
+        @ppu_addr.copy_x @tmp_addr if @rendering_enabled
         # still in 257. 257-320, fetch sprite tiles for the next scanline
-        257.step(320, 8) do
-          sprite_fetch # 2 cycles
-          read_sprite_x_pos # 1 cycle
-          read_sprite_attr  # 1 cycle
-          get_tile_low
-          get_tile_high
-          buffer_sprite
-        end
+        scanline_cycle_257_to_320
+        sprite_fetch
         # cycle 321-336, fetch the first two tiles for the next scanline
-        321.step(336, 8) do
-          read_nametable_byte
-          read_attr_byte
-          get_tile_low
-          get_tile_high
-          reload_shift_register
-          ppu_addr_inc_x
-        end
+        scanline_cycle_321_to_336
         # cycle 337-340
         #read_nametable_byte
         #read_nametable_byte
+        scanline_cycle_337_to_340
+      end
+
+      def scanline_cycle_9_to_64
+        # cycle 1
+        draw_point
+        Fiber.yield
+        # cycle 2
+        draw_point
+        read_nametable_byte
+        Fiber.yield
+        # cycle 3
+        draw_point
+        Fiber.yield
+        # cycle 4
+        draw_point
+        read_attr_byte
+        Fiber.yield
+        # cycle 5
+        draw_point
+        Fiber.yield
+        # cycle 6
+        draw_point
+        get_tile_low
+        Fiber.yield
+        # cycle 7
+        draw_point
+        Fiber.yield
+        # cycle 8
+        draw_point
+        get_tile_high
+        reload_shift_register
+        @ppu_addr.coarse_x_increment if @rendering_enabled
+        Fiber.yield
+      end
+
+      alias_method :scanline_cycle_1_to_8, :scanline_cycle_9_to_64
+      alias_method :scanline_cycle_65_to_256, :scanline_cycle_9_to_64
+
+      def scanline_cycle_257_to_320
+        257.step(320, 8) do
+          # cycle 1
+          #read_sprite_y_pos
+          Fiber.yield
+          # cycle 2
+          #read_sprite_tile_num
+          Fiber.yield
+          # cycle 3
+          #read_sprite_x_pos # 1 cycle
+          Fiber.yield
+          # cycle 4
+          #read_sprite_attr  # 1 cycle
+          Fiber.yield
+          # cycle 5
+          Fiber.yield
+          # cycle 6
+          #get_tile_low
+          Fiber.yield
+          # cycle 7
+          Fiber.yield
+          # cycle 8
+          #get_tile_high
+          #buffer_sprite
+          Fiber.yield
+        end
+      end
+
+      def scanline_cycle_321_to_336
+        321.step(336, 8) do 
+          # cycle 1
+          @bg_buffer.shift
+          Fiber.yield
+          # cycle 2
+          @bg_buffer.shift
+          read_nametable_byte
+          Fiber.yield
+          # cycle 3
+          @bg_buffer.shift
+          Fiber.yield
+          # cycle 4
+          @bg_buffer.shift
+          read_attr_byte
+          Fiber.yield
+          # cycle 5
+          @bg_buffer.shift
+          Fiber.yield
+          # cycle 6
+          @bg_buffer.shift
+          get_tile_low
+          Fiber.yield
+          # cycle 7
+          @bg_buffer.shift
+          Fiber.yield
+          # cycle 8
+          @bg_buffer.shift
+          get_tile_high
+          reload_shift_register
+          @ppu_addr.coarse_x_increment if @rendering_enabled
+          Fiber.yield
+        end
+      end
+
+      def scanline_cycle_337_to_340
+        337.step(340) { Fiber.yield }
       end
 
       def read_nametable_byte
@@ -287,13 +376,11 @@ module Hongbai
         @bg_buffer[8, 8] = @pattern
       end
 
-      def draw_8_points
-        8.times do
-          color_index = @render_function.call
-          put_pixel color_index
-          @bg_buffer.shift
-          @x += 1
-        end
+      def draw_point
+        color_index = @render_function.call
+        put_pixel color_index
+        @bg_buffer.shift
+        @x += 1
       end
 
       def render_bg_and_sprite
@@ -313,41 +400,6 @@ module Hongbai
       end
 
       def render_none; 0 end
-
-      def fetch_pattern
-        read_nametable_byte
-        read_attr_byte
-        get_tile_low
-        get_tile_high
-        @ppu_addr.coarse_x_increment if @rendering_enabled
-      end
-
-      def render_scanline
-        @ppu_addr.copy_x(@tmp_addr) if @rendering_enabled
-        fetch_pattern
-        @bg_buffer[0, 8] = @pattern
-        fetch_pattern
-        @bg_buffer[8, 8] = @pattern
-
-        # evaluate sprite info for next scanline
-        sprite_evaluation
-
-        32.times do
-          draw_8_points
-          read_nametable_byte
-          read_attr_byte
-          get_tile_low
-          get_tile_high
-          reload_shift_register
-          @ppu_addr.coarse_x_increment if @rendering_enabled
-        end
-
-        # HBlank
-        # fetch sprite tiles for the next scanline
-        sprite_fetch
-        @ppu_addr.y_increment if @rendering_enabled
-        @x = 0
-      end
 
       # Pre-compute attributes for every address in a nametable
       # with all 256 possible atribute bytes.
@@ -397,8 +449,6 @@ module Hongbai
 
       # Ppu -> nil
       def sprite_evaluation
-        @oam2.init
-
         # TODO: use OAMADDR to start
         y = @oam[0]
         @oam2.insert(y)

@@ -33,14 +33,14 @@ module Hongbai
       end
     end
 
-    CYCLES_PER_SCANLINE = 114 
     def initialize(rom, video, input)
       @input = input
       @apu = Apu.new
       @ppu = Ppu.new(rom, video, self)
       @mem = Memory.new(@apu, @ppu, rom, @input)
       @cpu = Cpu.new(@mem)
-      @next_scanline_cycle = CYCLES_PER_SCANLINE
+
+      @nmi = false
 
       # for debug
       @trace = false
@@ -49,13 +49,13 @@ module Hongbai
 
     # FIXME: IRQ timing
     def step
-      @cpu.step
-      @cpu.irq if @apu.irq?
-      cycle = @mem.cycle
-      while @next_scanline_cycle < cycle
-        @cpu.nmi if @ppu.main_loop.resume
-        @next_scanline_cycle += CYCLES_PER_SCANLINE
+      if @nmi
+        @nmi = false
+        @cpu.nmi
       end
+
+      @cpu.irq if @apu.irq?
+      @cpu.step
     end
 
     def on_new_frame
@@ -65,5 +65,6 @@ module Hongbai
     end
 
     attr_reader :frame
+    attr_writer :nmi
   end
 end
