@@ -6,8 +6,8 @@ module Hongbai
   SCREEN_HEIGHT = 240
 
   # TODO:
-  # ** Leftmost pixles render control
   # ** Color emphasize and grey scale display
+  # ** Describe ppu address increment in a more concise way.
  
   class Ppu
     VRAM_ADDR_INC = [1, 32]
@@ -39,8 +39,6 @@ module Hongbai
       @generate_vblank_nmi = false
       # PPU_MASK
       @gray_scale = false
-      @show_leftmost_8_bg = false
-      @show_leftmost_8_sprite = false
       @render_functions =               # sprite(1: enable) background(1: enable)
         [method(:render_none),          # 00
          method(:render_bg),            # 01
@@ -48,6 +46,7 @@ module Hongbai
          method(:render_bg_and_sprite)] # 11
       @render_type = 0
       @render_function = @render_functions[@render_type]
+      @left_most_render_function = @render_function
       @rendering_enabled = false
       @emphasize_red = false
       @emphasize_green = false
@@ -126,7 +125,7 @@ module Hongbai
     end
 
     def read_ppu_data(_addr)
-      # TODO: I'd like to write the logic without a if condition, thus like
+      # TODO: I'd like to move the increment logic into Addr class, thus I can write:
       # addr = @ppu_addr.val
       # @ppu_addr.load_next_value
       if @rendering_enabled
@@ -164,13 +163,12 @@ module Hongbai
 
     def write_ppu_mask(_addr, val)
       @gray_scale             = val[0] == 1
-      @show_leftmost_8_bg     = val[1] == 1
-      @show_leftmost_8_sprite = val[2] == 1
       @emphasize_red          = val[5] == 1
       @emphasize_green        = val[6] == 1
       @emphasize_blue         = val[7] == 1
       @render_type = (val >> 3) & 3
       @render_function = @render_functions[@render_type]
+      @left_most_render_function = @render_functions[(val >> 1) & @render_type]
       @rendering_enabled = @render_type != 0 && !@in_vblank
     end
 
@@ -252,7 +250,9 @@ module Hongbai
         end
 
         305.step(320) { Fiber.yield }
-        scanline_cycle_321_to_336
+        321.step(336, 8) do 
+          tile_fetch_8_cycles { @bg_buffer.shift }
+        end
         scanline_cycle_337_to_340
       end
 
@@ -260,16 +260,16 @@ module Hongbai
         # last 340 cycles of 341 cycles in total
         @x = 0
         # cycle 1-8
-        scanline_cycle_1_to_8
+        tile_fetch_8_cycles { draw_point @left_most_render_function[] }
         # cycle 9-64
         9.step(64, 8) do
-          scanline_cycle_9_to_64
+          tile_fetch_8_cycles { draw_point @render_function[] }
         end
         # In fact this happens during cycle 1-64
         @oam2.init
         # cycle 65-256, with sprite evaluation
         65.step(256, 8) do
-          scanline_cycle_65_to_256
+          tile_fetch_8_cycles { draw_point @render_function[] }
         end
         # still in cycle 256
         # FIXME: should yield here
@@ -279,48 +279,47 @@ module Hongbai
         scanline_cycle_257_to_320
         sprite_fetch
         # cycle 321-336, fetch the first two tiles for the next scanline
-        scanline_cycle_321_to_336
+        321.step(336, 8) do 
+          tile_fetch_8_cycles { @bg_buffer.shift }
+        end
         # cycle 337-340
         #read_nametable_byte
         #read_nametable_byte
         scanline_cycle_337_to_340
       end
 
-      def scanline_cycle_9_to_64
+      def tile_fetch_8_cycles
         # cycle 1
-        draw_point
+        yield
         Fiber.yield
         # cycle 2
-        draw_point
+        yield
         read_nametable_byte
         Fiber.yield
         # cycle 3
-        draw_point
+        yield
         Fiber.yield
         # cycle 4
-        draw_point
+        yield
         read_attr_byte
         Fiber.yield
         # cycle 5
-        draw_point
+        yield
         Fiber.yield
         # cycle 6
-        draw_point
+        yield
         get_tile_low
         Fiber.yield
         # cycle 7
-        draw_point
+        yield
         Fiber.yield
         # cycle 8
-        draw_point
+        yield
         get_tile_high
         reload_shift_register
         @ppu_addr.coarse_x_increment if @rendering_enabled
         Fiber.yield
       end
-
-      alias_method :scanline_cycle_1_to_8, :scanline_cycle_9_to_64
-      alias_method :scanline_cycle_65_to_256, :scanline_cycle_9_to_64
 
       def scanline_cycle_257_to_320
         @ppu_addr.copy_x @tmp_addr if @rendering_enabled
@@ -351,41 +350,6 @@ module Hongbai
         end
       end
 
-      def scanline_cycle_321_to_336
-        321.step(336, 8) do 
-          # cycle 1
-          @bg_buffer.shift
-          Fiber.yield
-          # cycle 2
-          @bg_buffer.shift
-          read_nametable_byte
-          Fiber.yield
-          # cycle 3
-          @bg_buffer.shift
-          Fiber.yield
-          # cycle 4
-          @bg_buffer.shift
-          read_attr_byte
-          Fiber.yield
-          # cycle 5
-          @bg_buffer.shift
-          Fiber.yield
-          # cycle 6
-          @bg_buffer.shift
-          get_tile_low
-          Fiber.yield
-          # cycle 7
-          @bg_buffer.shift
-          Fiber.yield
-          # cycle 8
-          @bg_buffer.shift
-          get_tile_high
-          reload_shift_register
-          @ppu_addr.coarse_x_increment if @rendering_enabled
-          Fiber.yield
-        end
-      end
-
       def scanline_cycle_337_to_340
         337.step(340) { Fiber.yield }
       end
@@ -407,9 +371,9 @@ module Hongbai
         @bg_buffer[8, 8] = @pattern
       end
 
-      def draw_point
-        color_index = @render_function.call
-        put_pixel color_index
+      def draw_point(color_index)
+        @output[@output_offset] = @palette.get_color(color_index)
+        @output_offset += 1
         @bg_buffer.shift
         @x += 1
       end
@@ -548,11 +512,6 @@ module Hongbai
       def self.to_8x16_sprite_tile_addr(tile_number)
         bank = tile_number & 1 * 256
         bank + (tile_number & 0xfe)
-      end
-
-      def put_pixel(color_index)
-        @output[@output_offset] = @palette.get_color(color_index)
-        @output_offset += 1
       end
 
       def set_sprite_zero_hit
