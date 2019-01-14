@@ -46,13 +46,15 @@ module Hongbai
          method(:render_bg),            # 01
          method(:render_sprite),        # 10
          method(:render_bg_and_sprite)] # 11
-      @render_function = @render_functions[0]
+      @render_type = 0
+      @render_function = @render_functions[@render_type]
       @rendering_enabled = false
       @emphasize_red = false
       @emphasize_green = false
       @emphasize_blue = false
       # PPU_STATUS
       @ppu_status = 0
+      @in_vblank = false
       # PPU_ADDR & PPU_SCROLL
       @ppu_addr = Address.new
       @tmp_addr = TempAddress.new
@@ -124,10 +126,19 @@ module Hongbai
     end
 
     def read_ppu_data(_addr)
-      # Mirror down addresses greater than 0x3fff
-      addr = @ppu_addr.to_i & 0x3fff
+      # TODO: I'd like to write the logic without a if condition, thus like
+      # addr = @ppu_addr.val
+      # @ppu_addr.load_next_value
+      if @rendering_enabled
+        addr = @ppu_addr.tile
+        @ppu_addr.coarse_x_increment
+        @ppu_addr.y_increment
+      else
+        # Mirror down addresses greater than 0x3fff
+        addr = @ppu_addr.to_i & 0x3fff
+        @ppu_addr.add @vram_addr_increment
+      end
       val = @vram.read(addr)
-      @ppu_addr.add @vram_addr_increment
       buffered = @ppu_data_read_buffer
       @ppu_data_read_buffer = val
 
@@ -158,9 +169,9 @@ module Hongbai
       @emphasize_red          = val[5] == 1
       @emphasize_green        = val[6] == 1
       @emphasize_blue         = val[7] == 1
-      render_type = (val >> 3) & 3
-      @rendering_enabled = render_type != 0
-      @render_function = @render_functions[render_type]
+      @render_type = (val >> 3) & 3
+      @render_function = @render_functions[@render_type]
+      @rendering_enabled = @render_type != 0 && !@in_vblank
     end
 
     def write_oam_addr(_addr, val)
@@ -193,10 +204,19 @@ module Hongbai
     end
 
     def write_ppu_data(_addr, val)
-      # Mirror down addresses greater than 0x3fff
-      addr = @ppu_addr.to_i & 0x3fff
-      @vram.write(addr, val)
-      @ppu_addr.add @vram_addr_increment
+      if @rendering_enabled
+        addr = @ppu_addr.tile
+        @vram.write(addr, val)
+        # TODO: If coincide with a standard VRAM address increment,
+        # don't increase the relevant counter.
+        @ppu_addr.coarse_x_increment
+        @ppu_addr.y_increment
+      else
+        # Mirror down addresses greater than 0x3fff
+        addr = @ppu_addr.to_i & 0x3fff
+        @vram.write(addr, val)
+        @ppu_addr.add @vram_addr_increment
+      end
     end
 
     private
@@ -255,9 +275,7 @@ module Hongbai
         # FIXME: should yield here
         sprite_evaluation
         @ppu_addr.y_increment if @rendering_enabled
-        # cycle 257
-        @ppu_addr.copy_x @tmp_addr if @rendering_enabled
-        # still in 257. 257-320, fetch sprite tiles for the next scanline
+        # cycle 257-320, fetch sprite tiles for the next scanline
         scanline_cycle_257_to_320
         sprite_fetch
         # cycle 321-336, fetch the first two tiles for the next scanline
@@ -305,6 +323,7 @@ module Hongbai
       alias_method :scanline_cycle_65_to_256, :scanline_cycle_9_to_64
 
       def scanline_cycle_257_to_320
+        @ppu_addr.copy_x @tmp_addr if @rendering_enabled
         257.step(320, 8) do
           # cycle 1
           #read_sprite_y_pos
@@ -547,12 +566,16 @@ module Hongbai
       def set_vblank_start
         # set_in_vblank to 1
         @ppu_status |= 0x80
+        @in_vblank = true
+        @rendering_enabled = false
       end
 
       # Ppu -> Nil
       def set_vblank_end
         # set in vblank to 0
         @ppu_status &= 0x7f
+        @in_vblank = false
+        @rendering_enabled = @render_type != 0
         # clear sprite_zero_hit flag
         @ppu_status &= 0xbf
         # clear sprite overflow flag
