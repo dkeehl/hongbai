@@ -6,18 +6,36 @@ module Hongbai
   SCREEN_HEIGHT = 240
 
   # TODO:
-  # ** Color emphasize and grey scale display
+  # ** Color emphasize
   # ** Describe ppu address increment in a more concise way.
  
   class Ppu
+    PALETTE = [
+      [124,124,124],    [0,0,252],        [0,0,188],        [68,40,188],
+      [148,0,132],      [168,0,32],       [168,16,0],       [136,20,0],
+      [80,48,0],        [0,120,0],        [0,104,0],        [0,88,0],
+      [0,64,88],        [0,0,0],          [0,0,0],          [0,0,0],
+      [188,188,188],    [0,120,248],      [0,88,248],       [104,68,252],
+      [216,0,204],      [228,0,88],       [248,56,0],       [228,92,16],
+      [172,124,0],      [0,184,0],        [0,168,0],        [0,168,68],
+      [0,136,136],      [0,0,0],          [0,0,0],          [0,0,0],
+      [248,248,248],    [60,188,252],     [104,136,252],    [152,120,248],
+      [248,120,248],    [248,88,152],     [248,120,88],     [252,160,68],
+      [248,184,0],      [184,248,24],     [88,216,84],      [88,248,152],
+      [0,232,216],      [120,120,120],    [0,0,0],          [0,0,0],
+      [252,252,252],    [164,228,252],    [184,184,248],    [216,184,248],
+      [248,184,248],    [248,164,192],    [240,208,176],    [252,224,168],
+      [248,216,120],    [216,248,120],    [184,248,184],    [184,248,216],
+      [0,252,252],      [248,216,248],    [0,0,0],          [0,0,0]
+    ].map {|r, g, b| (0xff << 24) | (r << 16) | (g << 8) | b }
+   
     VRAM_ADDR_INC = [1, 32]
 
     def initialize(rom, driver, context)
       @context = context
       @renderer = driver
-      @palette = Palette.new
-      @vram = Vram.new(rom, @palette)
-      @rom = rom
+      palette = Palette.new
+      @vram = Vram.new(rom, palette)
       @oam = Oam.new
       @oam2 = Oam2.new
       # A buffer that computes color priority and checks sprite 0 hit.
@@ -38,7 +56,8 @@ module Hongbai
       @sprite_height = 8
       @generate_vblank_nmi = false
       # PPU_MASK
-      @gray_scale = false
+      @color_functions = [palette.inner, palette.method(:grey_scale)]
+      @color_function = @color_functions[0]
       @render_functions =               # sprite(1: enable) background(1: enable)
         [method(:render_none),          # 00
          method(:render_bg),            # 01
@@ -162,10 +181,11 @@ module Hongbai
     end
 
     def write_ppu_mask(_addr, val)
-      @gray_scale             = val[0] == 1
       @emphasize_red          = val[5] == 1
       @emphasize_green        = val[6] == 1
       @emphasize_blue         = val[7] == 1
+
+      @color_function = @color_functions[val[0]]
       @render_type = (val >> 3) & 3
       @render_function = @render_functions[@render_type]
       @left_most_render_function = @render_functions[(val >> 1) & @render_type]
@@ -372,7 +392,7 @@ module Hongbai
       end
 
       def draw_point(color_index)
-        @output[@output_offset] = @palette.get_color(color_index)
+        @output[@output_offset] = PALETTE[@color_function[color_index]]
         @output_offset += 1
         @bg_buffer.shift
         @x += 1
@@ -394,6 +414,7 @@ module Hongbai
         @sprite_buffer[@x]
       end
 
+      # TODO: if the ppu address is pointing to the pallete, return the color
       def render_none; 0 end
 
       # Pre-compute attributes for every address in a nametable
@@ -667,8 +688,8 @@ module Hongbai
       # $3f00 - $3f1f palette
       # $3f20 - $3fff mirrors of $3f00 - $3f1f
       (0x3f00..0x3fff).each do |i|
-        @read_map[i] = @palette.method(:load)
-        @write_map[i] = @palette.method(:store)
+        @read_map[i] = @palette.method(:read)
+        @write_map[i] = @palette.write_method(i)
       end
     end
 
@@ -720,55 +741,41 @@ module Hongbai
 
     def push_point(color, x_offset)
       item = @items[x_offset]
-      hit = item.from_sprite_0 && item.color != 0 && color != 0 && x_offset != 255
+      hit = item.from_sprite_0 && color != 0 && item.color != 0 && x_offset != 255
       item.color = color unless item.color != 0 && item.above_bg || color == 0
       hit
     end
   end
 
   class Palette
-    PALETTE = [
-      [124,124,124],    [0,0,252],        [0,0,188],        [68,40,188],
-      [148,0,132],      [168,0,32],       [168,16,0],       [136,20,0],
-      [80,48,0],        [0,120,0],        [0,104,0],        [0,88,0],
-      [0,64,88],        [0,0,0],          [0,0,0],          [0,0,0],
-      [188,188,188],    [0,120,248],      [0,88,248],       [104,68,252],
-      [216,0,204],      [228,0,88],       [248,56,0],       [228,92,16],
-      [172,124,0],      [0,184,0],        [0,168,0],        [0,168,68],
-      [0,136,136],      [0,0,0],          [0,0,0],          [0,0,0],
-      [248,248,248],    [60,188,252],     [104,136,252],    [152,120,248],
-      [248,120,248],    [248,88,152],     [248,120,88],     [252,160,68],
-      [248,184,0],      [184,248,24],     [88,216,84],      [88,248,152],
-      [0,232,216],      [120,120,120],    [0,0,0],          [0,0,0],
-      [252,252,252],    [164,228,252],    [184,184,248],    [216,184,248],
-      [248,184,248],    [248,164,192],    [240,208,176],    [252,224,168],
-      [248,216,120],    [216,248,120],    [184,248,184],    [184,248,216],
-      [0,252,252],      [248,216,248],    [0,0,0],          [0,0,0]
-    ].map {|r, g, b| (0xff << 24) | (r << 16) | (g << 8) | b }
-   
-    Item = Struct.new(:val, :color)
+    MIRRORS = [0x00, 0x04, 0x08, 0x0c, 0x10, 0x14, 0x18, 0x1c] 
 
     def initialize
-      # rus from $3f00 to $3f1f, 32 bytes
-      @items = Array.new(32) { Item.new(0, 0xffffffff) }
-      # Mirroring
-      [0x10, 0x14, 0x18, 0x1c].each do |addr|
-        @items[addr] = @items[addr - 0x10]
-      end
+      # runs from $3f00 to $3f1f, 32 bytes
+      @inner = Array.new(32, 0x3f)
     end
 
-    def get_color(color_index)
-      @items[color_index].color
+    attr_reader :inner
+
+    def grey_scale(i)
+      @inner[i] & 0x30
     end
 
-    def load(addr)
-      @items[addr & 0x1f].val
+    def read(addr)
+      @inner[addr & 0x1f]
     end
 
-    def store(addr, val)
-      item = @items[addr & 0x1f]
-      item.val = val
-      item.color = PALETTE[val & 0x3f]
+    def write(addr, val)
+      @inner[addr & 0x1f] = val & 0x3f
+    end
+
+    def write_mirror(addr, val)
+      @inner[addr & 0xf] = val & 0x3f
+      @inner[addr & 0xf + 0x10] = val & 0x3f
+    end
+
+    def write_method(i)
+      MIRRORS.include?(i & 0x1f) ? method(:write_mirror) : method(:write)
     end
   end
 end
