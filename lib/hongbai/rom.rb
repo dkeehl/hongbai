@@ -76,6 +76,7 @@ module Hongbai
         @mirroring = mirroring
         @tv_system = tv_system
 
+        @allow_write_to_rom = false
         make_mapper
       end
 
@@ -158,8 +159,11 @@ module Hongbai
       (0x8000..0xffff).each {|i| @prg_data[i] = @prg_rom[i & prg_addr_mask] }
 
       # pre-compute the pattern table with all 8 possible attributes
+      if @chr_rom.size == 0
+        @allow_write_to_rom = true
+        @chr_rom = Array.new(0x2000, 0)
+      end
       @pattern_table = (0..0xfff).map {|pattern| build_pattern pattern }
-      @allow_write_to_rom = false
     end
 
     attr_reader :pattern_table
