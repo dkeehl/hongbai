@@ -762,7 +762,7 @@ module Hongbai
 
     def write_mirror(addr, val)
       @inner[addr & 0xf] = val & 0x3f
-      @inner[addr & 0xf + 0x10] = val & 0x3f
+      @inner[(addr & 0xf) + 0x10] = val & 0x3f
     end
 
     def write_method(i)
