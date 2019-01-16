@@ -46,12 +46,18 @@ module Hongbai
       @sprite_8x16_mode = false
       @sprite_height = 8
       @generate_vblank_nmi = false
+      # PPU_ADDR & PPU_SCROLL
+      @ppu_addr = Address.new
+      @tmp_addr = TempAddress.new
+      @fine_x_offset = 0
+      @toggle = false
+      @ppu_data_read_buffer = 0
       # PPU_MASK
       @vga_palette = PALETTES[0]
       @color_functions = [vram_palette.inner, vram_palette.method(:grey_scale)]
       @color_function = @color_functions[0]
       @render_functions =               # sprite(1: enable) background(1: enable)
-        [method(:render_none),          # 00
+        [@ppu_addr.method(:palette),    # 00
          method(:render_bg),            # 01
          method(:render_sprite),        # 10
          method(:render_bg_and_sprite)] # 11
@@ -62,12 +68,6 @@ module Hongbai
       # PPU_STATUS
       @ppu_status = 0
       @in_vblank = false
-      # PPU_ADDR & PPU_SCROLL
-      @ppu_addr = Address.new
-      @tmp_addr = TempAddress.new
-      @fine_x_offset = 0
-      @toggle = false
-      @ppu_data_read_buffer = 0
 
       @pattern_table = rom.pattern_table
 
@@ -404,9 +404,6 @@ module Hongbai
       def render_sprite
         @sprite_buffer[@x]
       end
-
-      # TODO: if the ppu address is pointing to the pallete, return the color
-      def render_none; 0 end
 
       # Pre-compute attributes for every address in a nametable
       # with all 256 possible atribute bytes.

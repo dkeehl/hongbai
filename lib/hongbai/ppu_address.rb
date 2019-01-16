@@ -115,6 +115,10 @@ module Hongbai
       ATTR_ADDRS[@val & 0xfff]
     end
 
+    def palette
+      @val & 0x3fff < 0x3f00 ? 0 : @val & 0x1f
+    end
+
     def add(n)
       @val += n
     end
