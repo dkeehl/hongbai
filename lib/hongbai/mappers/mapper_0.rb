@@ -1,15 +1,17 @@
 module Hongbai
-  # Mapper 0
   module Nrom
-    def mapper_init
+    def mapper_init(prg_rom, chr_rom)
       @prg_data = Array.new(0x10000, 0)
-      prg_addr_mask = @prg_rom.length > 16384 ? 0x7fff : 0x3fff
-      (0x8000..0xffff).each {|i| @prg_data[i] = @prg_rom[i & prg_addr_mask] }
+      prg_addr_mask = prg_rom.length > 0x4000 ? 0x7fff : 0x3fff
+      (0x8000..0xffff).each {|i| @prg_data[i] = prg_rom[i & prg_addr_mask] }
 
       # pre-compute the pattern table with all 8 possible attributes
-      if @chr_rom.size == 0
+      if chr_rom.size == 0
         @allow_write_to_rom = true
         @chr_rom = Array.new(0x2000, 0)
+      else
+        @allow_write_to_rom = false
+        @chr_rom = chr_rom
       end
       @pattern_table = (0..0xfff).map {|pattern| build_pattern pattern }
     end

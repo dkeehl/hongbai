@@ -1,89 +1,72 @@
 module Hongbai
-  class INes
+  class Rom
     class << self
-      # String -> INes
       def from_file(file)
-        File.open(file, 'r') do |f|
-          header = f.read(16)
-          if header[0..3] != "NES\x1A"
-            puts "Invalid file format"
-            return nil
-          end
-          bytes = header.unpack("C*")
-          prg_rom_size = bytes[4]
-          chr_rom_size = bytes[5]
-          flag6 = bytes[6]
-          flag7 = bytes[7]
-          _prg_ram_size = bytes[8]
-          flag9 = bytes[9]
-          mapper = mapper_number(flag6, flag7)
-          mirroring = mirroring_mode(flag6)
-          tv = tv_system(flag9)
-          if has_trainer? flag6
-            trainer = f.read(512).unpack("C*")
-          end
-          prg_rom = f.read(prg_rom_size * 16384).unpack("C*")
-          chr_rom = f.read(chr_rom_size * 8192).unpack("C*")
-          new(prg_rom, chr_rom, trainer, mapper, mirroring, tv)
+        buf = File.binread(file)
+        header = buf.slice!(0, 16)
+        spec = parse_header(header)
+        if size_checks?(spec, buf)
+          return new(spec, buf.bytes)  
+        else
+          raise "bad file size"
         end
       end
 
-      def has_trainer?(flag6)
-        (flag6 >> 3) & 1 == 1
-      end
-
-      def mapper_number(flag6, flag7)
-        (flag7 & 0xf0) | (flag6 >> 4)
+      def parse_header(header)
+        raise "Invalid file format" if header[0..3] != "NES\x1A"
+        header = header.bytes
+        spec = {}
+        prg_rom_size, chr_rom_size, flag6, flag7, _prg_ram_size, flag9 = header[4..9]
+        spec[:prg_rom_size] = prg_rom_size * 0x4000
+        spec[:chr_rom_size] = chr_rom_size * 0x2000
+        spec[:has_prg_ram] = flag6[1] == 1
+        spec[:has_trainer] = flag6[2] == 1
+        spec[:mapper] = (flag7 & 0xf0) | (flag6 >> 4)
+        spec[:mirroring] = mirroring_mode(flag6)
+        spec[:tv_system] = flag9[0] == 0 ? :NTSC : :PAL
+        spec
       end
 
       def mirroring_mode(flag6)
-        if (flag6 >> 3) & 1 == 1
-          Mirroring::FourScreens.new
-        elsif flag6 & 1 == 1
-          Mirroring::Vertical.new
+        if flag6[3] == 1
+          Mirroring::FourScreens
+        elsif flag6[0] == 1
+          Mirroring::Vertical
         else
-          Mirroring::Horizontal.new
+          Mirroring::Horizontal
         end
       end
 
-      def tv_system(flag9)
-        flag9 & 1 == 0 ? "NTSC" : "PAL"
+      def size_checks?(spec, buf)
+        expect_size = spec[:prg_rom_size] + spec[:chr_rom_size]
+        expect_size += 512 if spec[:has_trainer]
+        buf.size == expect_size
       end
     end
 
-    # INes -> String
     def inspect
       "NES ROM\n"\
-      "PRG ROM size: #{@prg_rom.length / 1024} KB\n"\
-      "CHR ROM size: #{@chr_rom.length / 1024} KB\n"\
-      "Mapper Number: #{@mapper}\n"\
+      "PRG ROM size: #{@spec[:prg_rom_size] / 1024} KB\n"\
+      "CHR ROM size: #{@spec[:chr_rom_size] / 1024} KB\n"\
+      "Mapper Number: #{@spec[:mapper]}\n"\
       "Mirroring Mode: #{@mirroring}\n"\
-      "TV System: #{@tv_system}\n"
+      "TV System: #{@spec[:tv_system]}\n"
     end
 
     attr_reader :mirroring
     private_class_method :new
 
-    private
-      def initialize(prg_rom, chr_rom, trainer, mapper, mirroring, tv_system)
-        @prg_rom = prg_rom
-        @chr_rom = chr_rom
-        @trainer = trainer
-        @mapper = mapper
-        @mirroring = mirroring
-        @tv_system = tv_system
+    def initialize(spec, buf)
+      @spec = spec
+      @trainer = buf.slice!(0, 512) if @spec[:has_trainer]
+      @mirroring = @spec[:mirroring].new
+      prg_rom = buf.slice!(0, @spec[:prg_rom_size])
+      chr_rom = buf.slice!(0, @spec[:chr_rom_size])
 
-        @allow_write_to_rom = false
-        make_mapper
-      end
-
-
-      def make_mapper
-        # Only support mapper0 at the moment
-        require_relative "./mappers/mapper_#{@mapper}"
-        singleton_class.class_eval { include Mapper }
-        mapper_init
-      end
+      require_relative "./mappers/mapper_#{@spec[:mapper]}"
+      singleton_class.class_eval { include Mapper }
+      mapper_init(prg_rom, chr_rom)
+    end
   end
 
   class Mirroring
