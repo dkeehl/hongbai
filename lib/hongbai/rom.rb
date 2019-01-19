@@ -44,86 +44,76 @@ module Hongbai
       end
     end
 
+    def initialize(spec, buf)
+      @spec = spec
+      @buf = buf
+    end
+
     def inspect
       "NES ROM\n"\
       "PRG ROM size: #{@spec[:prg_rom_size] / 1024} KB\n"\
       "CHR ROM size: #{@spec[:chr_rom_size] / 1024} KB\n"\
       "Mapper Number: #{@spec[:mapper]}\n"\
-      "Mirroring Mode: #{@mirroring}\n"\
+      "Mirroring Mode: #{@spec[:mirroring]}\n"\
       "TV System: #{@spec[:tv_system]}\n"
     end
 
-    attr_reader :mirroring
-    private_class_method :new
+    def insert_to(console)
+      @console = console
+      @ram0 = Array.new(0x400, 0)
+      @ram1 = Array.new(0x400, 0)
 
-    def initialize(spec, buf)
-      @spec = spec
-      @trainer = buf.slice!(0, 512) if @spec[:has_trainer]
-      @mirroring = @spec[:mirroring].new
-      prg_rom = buf.slice!(0, @spec[:prg_rom_size])
-      chr_rom = buf.slice!(0, @spec[:chr_rom_size])
+      @trainer = @buf.slice!(0, 512) if @spec[:has_trainer]
+      prg_rom = @buf.slice!(0, @spec[:prg_rom_size])
+      chr_rom = @buf.slice!(0, @spec[:chr_rom_size])
 
       require_relative "./mappers/mapper_#{@spec[:mapper]}"
       singleton_class.class_eval { include Mapper }
       mapper_init(prg_rom, chr_rom)
     end
+
+    def pre_compute_patterns(array)
+      array.each_slice(16).map do |a|
+        plane0 = a[0, 8]
+        plane1 = a[8, 8]
+        (0..7).map do |y|
+          lo = plane0[y]
+          hi = plane1[y]
+          (0..7).map do |attribute|
+            attribute <<= 2
+            (0..7).map do |x|
+              color = (hi[7 - x] << 1) | lo[7 - x]
+              color == 0 ? 0 : attribute | color
+            end
+          end
+        end
+      end.flatten!(1)
+    end
+
+    private_class_method :new
   end
 
   class Mirroring
-    def initialize
-      @ram = Array.new(0x800, 0xff)
-    end
-
     class Vertical < self
-      def to_s; "Vertical" end
+      def self.to_s; "Vertical" end
 
-      def read_ram(addr)
-        @ram[addr & 0x7ff]
-      end
-
-      def write_ram(addr, val)
-        @ram[addr & 0x7ff] = val
-      end
-
-      def ram_read_method(_addr)
-        method :read_ram
-      end
-
-      def ram_write_method(_addr)
-        method :write_ram
+      # returns 0 if an adderss is mapped to RAM $000-$3ff;
+      # returns 1 if an address is mapped to RAM $400-$7ff
+      def self.mirror(addr)
+        addr / 0x400 % 2
       end
     end
 
     class Horizontal < self
-      def to_s; "Horizontal" end
+      def self.to_s; "Horizontal" end
 
-      def read_ram_0(addr)
-        @ram[addr & 0x3ff]
-      end
-
-      def write_ram_0(addr, val)
-        @ram[addr & 0x3ff] = val
-      end
-
-      def read_ram_2(addr)
-        @ram[(addr & 0x3ff) + 0x400]
-      end
-
-      def write_ram_2(addr, val)
-        @ram[(addr & 0x3ff) + 0x400] = val
-      end
-
-      def ram_read_method(addr)
-        (addr / 0x800).even? ?  method(:read_ram_0) : method(:read_ram_2)
-      end
-
-      def ram_write_method(addr)
-        (addr / 0x800).even? ? method(:write_ram_0) : method(:write_ram_2)
+      def self.mirror(addr)
+        addr / 0x800 % 2
       end
     end
 
     class FourScreens < self
-      def to_s; "4-Screen" end
+      def self.to_s; "4-Screen" end
     end
   end
 end

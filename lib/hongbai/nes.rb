@@ -36,25 +36,29 @@ module Hongbai
     def initialize(rom, video, input)
       @input = input
       @apu = Apu.new
+      rom.insert_to(self)
       @ppu = Ppu.new(rom, video, self)
       @mem = Memory.new(@apu, @ppu, rom, @input)
       @cpu = Cpu.new(@mem)
 
       @nmi = false
+      @irq = false
+      @apu_frame_irq = false
+      @apu_dmc_irq = false
+      @rom_irq = false
 
       # for debug
       @trace = false
       @frame = 0
     end
 
-    # FIXME: IRQ timing
     def step
       if @nmi
         @nmi = false
         @cpu.nmi
       end
 
-      @cpu.irq if @apu.irq?
+      @cpu.irq if @irq
       @cpu.step
     end
 
@@ -62,6 +66,25 @@ module Hongbai
       @input.poll
       @apu.flush
       @frame += 1
+    end
+
+    def update_irq_state
+      @irq = @rom_irq || @apu_frame_irq || @apu_dmc_irq
+    end
+
+    def rom_irq=(b)
+      @rom_irq = b
+      update_irq_state
+    end
+
+    def apu_frame_irq=(b)
+      @apu_frame_irq = b
+      update_irq_state
+    end
+
+    def apu_dmc_irq=(b)
+      @apu_dmc_irq = b
+      update_irq_state
     end
 
     attr_reader :frame

@@ -13,32 +13,38 @@ module Hongbai
         @allow_write_to_rom = false
         @chr_rom = chr_rom
       end
-      @pattern_table = (0..0xfff).map {|pattern| build_pattern pattern }
+      @pattern_table = pre_compute_patterns(@chr_rom)
+
+      # method catche
+      @methods = {}
+      [:read_ram0, :write_ram0, :read_ram1, :write_ram1, :prg_write,
+       :nop_write, :chr_write,].each {|k| @methods[k] = method(k) } 
     end
 
     attr_reader :pattern_table
-
-    # pattern in (0..0xfff) -> Array<8, 8>
-    def build_pattern(pattern)
-      tile_num, fine_y  = pattern.divmod(8)
-      panel_0_addr = tile_num * 16 + fine_y
-      (0..7).map do |attribute|
-        attribute <<= 2
-        (0..7).map do |x|
-          bitmap_low = @chr_rom[panel_0_addr]
-          bitmap_high = @chr_rom[panel_0_addr + 8]
-          color = (bitmap_high[7 - x] << 1) | bitmap_low[7 - x]
-          color == 0 ? 0 : attribute | color
-        end
-      end
-    end
 
     # Read only
     def prg_write(addr, val)
       @prg_data[addr] = val if addr < 0x8000
     end
 
-    def chr_store(addr, val)
+    def read_ram0(addr)
+      @ram0[addr & 0x3ff]
+    end
+
+    def read_ram1(addr)
+      @ram1[addr & 0x3ff]
+    end
+
+    def write_ram0(addr, val)
+      @ram0[addr & 0x3ff] = val
+    end
+
+    def write_ram1(addr, val)
+      @ram1[addr & 0x3ff] = val
+    end
+
+    def chr_write(addr, val)
       # Chr rom is not modified in normal situations.
       # Once this method is called, we need to update the cached pattern table.
       @chr_rom[addr] = val
@@ -46,24 +52,35 @@ module Hongbai
       @pattern_table[pattern] = build_pattern(pattern)
     end
 
-    def prg_read_method
-      @prg_data
-    end
-
     def nop_write(_addr, _val)
       STDERR.puts "Warn: Writing to CHR ROM"
     end
 
-    def prg_write_method
-      method :prg_write
+    def prg_read_method(_addr)
+      @prg_data
     end
 
-    def chr_read_method
-      @chr_rom
+    def prg_write_method(_addr)
+      @methods[:prg_write]
     end
 
-    def chr_write_method
-      @allow_write_to_rom ? method(:chr_store) : method(:nop_write)
+    def chr_read_method(addr)
+      case addr
+      when (0..0x1fff) then @chr_rom
+      when (0x2000..0x3fef)
+        bank = @spec[:mirroring].mirror(addr)
+        @methods[:"read_ram#{bank}"]
+      end
+    end
+
+    def chr_write_method(addr)
+      case addr
+      when (0..0x1fff)
+        @allow_write_to_rom ? @methods[:chr_store] : @methods[:nop_write]
+      when (0x2000..0x3fef)
+        bank = @spec[:mirroring].mirror(addr)
+        @methods[:"write_ram#{bank}"]
+      end
     end
   end
 

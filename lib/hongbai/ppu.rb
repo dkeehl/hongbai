@@ -156,7 +156,7 @@ module Hongbai
       @tmp_addr.nametable_x      = val[0]
       @tmp_addr.nametable_y      = val[1]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
-      @sprite_pattern_table_addr = val[3] * 2048 # 256 tiles * 8 rows per tile
+      @sprite_pattern_table_addr = val[3] * 256
       @bg_pattern_table_addr     = val[4] * 2048
 
       @sprite_8x16_mode = val[5] == 1
@@ -519,7 +519,7 @@ module Hongbai
 
       # Integer -> Integer
       def self.to_8x16_sprite_tile_addr(tile_number)
-        bank = tile_number & 1 * 256
+        bank = tile_number[0] * 256
         bank + (tile_number & 0xfe)
       end
 
@@ -663,15 +663,11 @@ module Hongbai
     def init_memory_map
       # Memory map
       # $0000 - $1fff pattern table (rom)
-      (0..0x1fff).each do |i|
-        @read_map[i] = @rom.chr_read_method
-        @write_map[i] = @rom.chr_write_method
-      end
       # $2000 - $2fff 4 nametables
       # $3000 - $3eff mirrors of $2000 - $2eff
-      (0x2000..0x3eff).each do |i|
-        @read_map[i] = @rom.mirroring.ram_read_method(i)
-        @write_map[i] = @rom.mirroring.ram_write_method(i)
+      (0..0x3eff).each do |i|
+        @read_map[i] = @rom.chr_read_method(i)
+        @write_map[i] = @rom.chr_write_method(i)
       end
       # $3f00 - $3f1f palette
       # $3f20 - $3fff mirrors of $3f00 - $3f1f

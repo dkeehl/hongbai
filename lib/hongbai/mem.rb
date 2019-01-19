@@ -183,7 +183,7 @@ module Hongbai
         end
         # $4020 - $ffff cartridge space
         (0x4020..0xffff).each do |i|
-          add_mapping(i, @rom.prg_read_method, @rom.prg_write_method)
+          add_mapping(i, @rom.prg_read_method(i), @rom.prg_write_method(i))
         end
       end
   end
