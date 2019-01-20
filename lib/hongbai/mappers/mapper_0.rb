@@ -15,10 +15,10 @@ module Hongbai
       end
       @pattern_table = pre_compute_patterns(@chr_rom)
 
-      # method catche
-      @methods = {}
-      [:read_ram0, :write_ram0, :read_ram1, :write_ram1, :prg_write,
-       :nop_write, :chr_write,].each {|k| @methods[k] = method(k) } 
+      cache_methods [
+        :read_ram0, :write_ram0, :read_ram1, :write_ram1, :prg_write,
+        :nop_write, :chr_write,
+      ]
     end
 
     attr_reader :pattern_table

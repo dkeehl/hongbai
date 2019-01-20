@@ -72,6 +72,11 @@ module Hongbai
       mapper_init(prg_rom, chr_rom)
     end
 
+    def cache_methods(ks)
+      @methods ||= {}
+      ks.each {|k| @methods[k] = method(k) }
+    end
+
     def pre_compute_patterns(array)
       array.each_slice(16).map do |a|
         plane0 = a[0, 8]

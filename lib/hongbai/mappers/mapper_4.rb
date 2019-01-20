@@ -19,7 +19,8 @@ module Hongbai
       @pattern_banks = @chr_banks.map {|bank| pre_compute_patterns bank }
       @pattern_table = Array.new(0x1000, Array.new(8, [0] * 8))
 
-      # initialize prg address $e000-$ffff
+      # initialize prg address $c000-$ffff
+      @prg_data[0xc000, 0x2000] = @prg_banks[-2]
       @prg_data[0xe000, 0x2000] = @prg_banks[-1] 
 
       # name table
@@ -38,20 +39,18 @@ module Hongbai
       @irq_enabled = false
       @irq_latch = 0
       @count = 0
-      @reload = false
-      @irq_functions = {}
-      [:nop, :set_irq_function, :clock_counter].each {|k| @irq_functions[k] = method(k) }
-      @irq_function = [@irq_functions[:set_irq_function], @irq_functions[:nop]]
 
-      # Catching. Avoid creating too many method objects
-      @methods = {}
-      [:write_8000, :write_8001, :write_a000, :write_a001,
-       :write_c000, :write_c001, :write_e000, :write_e001,
-       :read_nametable, :write_nametable, :nop_2,].each {|k| @methods[k] = method(k) }
+      cache_methods [
+        :write_8000, :write_8001, :write_a000, :write_a001,
+        :write_c000, :write_c001, :write_e000, :write_e001,
+        :read_nametable, :write_nametable, :nop, :nop_2,
+        :set_clock, :clock_counter, :read_pattern_table,
+      ]
+      @irq_function = [@methods[:set_clock], @methods[:nop]]
     end
 
     def pattern_table
-      method :read_pattern_table
+      @methods[:read_pattern_table]
     end
 
     def prg_read_method(_addr); @prg_data end
@@ -85,6 +84,7 @@ module Hongbai
     end
 
     def write_8000(_addr, val)
+      #STDERR.puts "write 8000 val = %02x" % val
       select = val & 7
       @update_function = @update_functions[select]
       swap_mode = val >> 6
@@ -94,6 +94,7 @@ module Hongbai
     end
 
     def write_8001(_addr, val)
+      #STDERR.puts "write 8001 val = %02x" % val
       @update_function[val]
     end
 
@@ -110,7 +111,7 @@ module Hongbai
     end
 
     def write_c001(_addr, _val)
-      @reload = true
+      @count = 0
     end
 
     def write_e000(_addr, _val)
@@ -124,6 +125,7 @@ module Hongbai
 
     # select 8K prg bank
     def update_prg(bank)
+      #STDERR.puts "update %04x, with prg bank #{bank} of #{@prg_banks.size}" % @update_addr
       @prg_data[@update_addr, 0x2000] = @prg_banks[bank % @prg_banks.size]
     end
 
@@ -145,7 +147,8 @@ module Hongbai
     end
 
     def swap_prg
-      @prg_data[0x8000, 0x2000], @prg_data[0xc000, 0x2000] = @prg_data[0xc000, 0x2000], @prg_data[0x8000, 0x2000]
+      @prg_data[0x8000, 0x2000], @prg_data[0xc000, 0x2000] =
+        @prg_data[0xc000, 0x2000], @prg_data[0x8000, 0x2000]
     end
 
     def swap_chr
@@ -154,7 +157,8 @@ module Hongbai
     end
 
     def swap_prg_and_chr
-      @prg_data[0x8000, 0x2000], @prg_data[0xc000, 0x2000] = @prg_data[0xc000, 0x2000], @prg_data[0x8000, 0x2000]
+      @prg_data[0x8000, 0x2000], @prg_data[0xc000, 0x2000] =
+        @prg_data[0xc000, 0x2000], @prg_data[0x8000, 0x2000]
       @chr_data.rotate! 0x1000
       @pattern_table.rotate! 0x800
     end
@@ -165,20 +169,20 @@ module Hongbai
       @pattern_table[tile_num]
     end
 
-    def set_irq_function
-      @irq_function[0] = @irq_functions[:nop]
-      @irq_function[1] = @irq_functions[:clock_counter]
+    def set_clock
+      @irq_function[0] = @methods[:nop]
+      @irq_function[1] = @methods[:clock_counter]
     end
 
     def clock_counter
-      @irq_function[0] = @irq_functions[:set_irq_function]
-      @irq_function[1] = @irq_functions[:nop]
-      if @counter == 0 || @reload
+      @irq_function[0] = @methods[:set_clock]
+      @irq_function[1] = @methods[:nop]
+      if @counter == 0
         @count = @irq_latch
       else
         @count -= 1
       end
-      @console.rom_irq = true if @counter == 0 && @irq_enabled
+      @console.rom_irq = true if @irq_enabled && @counter == 0
     end
 
     def read_nametable(addr)
