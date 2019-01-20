@@ -83,7 +83,7 @@ module Hongbai
       @trace = false
     end
 
-    attr_reader :main_loop
+    attr_reader :main_loop, :scanline
     attr_writer :trace
 
     def run_main_loop

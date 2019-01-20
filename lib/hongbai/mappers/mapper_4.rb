@@ -177,12 +177,12 @@ module Hongbai
     def clock_counter
       @irq_function[0] = @methods[:set_clock]
       @irq_function[1] = @methods[:nop]
-      if @counter == 0
+      if @count == 0
         @count = @irq_latch
       else
         @count -= 1
       end
-      @console.rom_irq = true if @irq_enabled && @counter == 0
+      @console.rom_irq = true if @irq_enabled && @count == 0
     end
 
     def read_nametable(addr)
