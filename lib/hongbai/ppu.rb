@@ -156,7 +156,7 @@ module Hongbai
       @tmp_addr.nametable_x      = val[0]
       @tmp_addr.nametable_y      = val[1]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
-      @sprite_pattern_table_addr = val[3] * 256
+      @sprite_pattern_table_addr = val[3] * 2048
       @bg_pattern_table_addr     = val[4] * 2048
 
       @sprite_8x16_mode = val[5] == 1
@@ -288,7 +288,6 @@ module Hongbai
         @ppu_addr.y_increment if @rendering_enabled
         # cycle 257-320, fetch sprite tiles for the next scanline
         scanline_cycle_257_to_320
-        sprite_fetch
         # cycle 321-336, fetch the first two tiles for the next scanline
         321.step(336, 8) do 
           tile_fetch_8_cycles { @bg_buffer.shift }
@@ -334,31 +333,49 @@ module Hongbai
 
       def scanline_cycle_257_to_320
         @ppu_addr.copy_x @tmp_addr if @rendering_enabled
-        257.step(320, 8) do
-          # cycle 1
-          #read_sprite_y_pos
-          Fiber.yield
-          # cycle 2
-          #read_sprite_tile_num
-          Fiber.yield
-          # cycle 3
-          #read_sprite_x_pos # 1 cycle
-          Fiber.yield
+        @sprite_buffer.clear
+        # cycel 257 to 264
+        0.step(3) { Fiber.yield }
+        @oam2.peek ? sprite_fetch(@oam2.has_sprite_zero) : dummy_sprite_fetch
+        Fiber.yield
+        5.step(7) { Fiber.yield }
+
+        265.step(320, 8) do
+          0.step(3) { Fiber.yield }
           # cycle 4
-          #read_sprite_attr  # 1 cycle
+          @oam2.peek ? sprite_fetch(false) : dummy_sprite_fetch
           Fiber.yield
-          # cycle 5
-          Fiber.yield
-          # cycle 6
-          #get_tile_low
-          Fiber.yield
-          # cycle 7
-          Fiber.yield
-          # cycle 8
-          #get_tile_high
-          #buffer_sprite
-          Fiber.yield
+
+          5.step(7) { Fiber.yield }
         end
+      end
+
+      def sprite_fetch(has_sprite_zero)
+        y, tile, attrs, x = @oam2.take_one
+        y_inter = @scanline - y
+        attr    = (attrs & 3) + 4
+        prior   = attrs[5] == 0
+        flip_h  = attrs[6] == 1
+        flip_v  = attrs[7] == 1
+        if !@sprite_8x16_mode
+          # 8*8 sprite mode
+          y_inter = 7 - y_inter if flip_v
+          addr = @sprite_pattern_table_addr + tile * 8 + y_inter
+        else
+          # 8*16 sprite mode
+          y_inter = 15 - y_inter if flip_v
+          addr = Ppu.to_8x16_sprite_tile_addr(tile) * 8 + y_inter
+        end
+
+        colors = @pattern_table[addr]
+        colors = colors[attr]
+        colors = colors.reverse if flip_h
+        @sprite_buffer.push_sprite(colors, x, prior, has_sprite_zero)
+      end
+
+      def dummy_sprite_fetch
+        addr = @sprite_8x16_mode ? 4080 : 2040 + @sprite_pattern_table_addr
+        @pattern_table[addr]
       end
 
       def scanline_cycle_337_to_340
@@ -494,29 +511,6 @@ module Hongbai
           sprite_y_offset + @sprite_height > @scanline
       end
 
-      # Ppu -> nil
-      # read oam2 data to buffer
-      def sprite_fetch
-        @sprite_buffer.clear
-
-        @oam2.each_sprite do |tile, attr, flip_h, flip_v, x, y, prior, sprite0|
-          y_inter = @scanline - y
-          if !@sprite_8x16_mode
-            # 8*8 sprite mode
-            tile += @sprite_pattern_table_addr
-            y_inter = 7 - y_inter if flip_v
-          else
-            # 8*16 sprite mode
-            tile = Ppu.to_8x16_sprite_tile_addr(tile)
-            y_inter = 15 - y_inter if flip_v
-          end
-
-          colors = @pattern_table[tile * 8 + y_inter][attr]
-          colors = colors.reverse if flip_h
-          @sprite_buffer.push_sprite(colors, x, prior, sprite0)
-        end
-      end
-
       # Integer -> Integer
       def self.to_8x16_sprite_tile_addr(tile_number)
         bank = tile_number[0] * 256
@@ -553,7 +547,7 @@ module Hongbai
 
   class Oam
     def initialize
-      @arr = Array.new(256, 0)
+      @arr = Array.new(256, 0xff)
       @addr = 0
     end
 
@@ -584,6 +578,7 @@ module Hongbai
       @openslot = 0
       @push_count = 0
       @has_sprite_zero = false
+      @read_offset = 1
     end
 
     attr_accessor :has_sprite_zero
@@ -594,6 +589,22 @@ module Hongbai
       @openslot = 0
       @push_count = 0
       @has_sprite_zero = false
+      @read_offset = 0
+    end
+
+    def to_s
+      @arr.each_slice(4).to_a.inspect
+    end
+
+    def peek
+      @push_count != 0
+    end
+
+    def take_one
+      i = @read_offset
+      @read_offset += 4
+      @push_count -= 3
+      return *@arr[i, 4]
     end
 
     # Oam2 -> Integer -> Nil
@@ -615,37 +626,6 @@ module Hongbai
     def full?
       @push_count >= 24 # 8 sprites, each 3 pushes
     end
-
-    # Iterate over sprites
-    def each_sprite
-      count = 0
-      if @has_sprite_zero
-        tile, attr, flip_h, flip_v, x, y, prior = take_at(0)
-        yield(tile, attr, flip_h, flip_v, x, y, prior, true)
-        count += 1
-      end
-
-      while count * 3 < @push_count
-        tile, attr, flip_h, flip_v, x, y, prior = take_at(count)
-        yield(tile, attr, flip_h, flip_v, x, y, prior, false)
-        count += 1
-      end
-    end
-
-    private
-      # Oam2 -> Integer -> (Integer, Integer, Bool, Bool, Integer, Integer, Bool)
-      def take_at(count)
-        tile = @arr[count * 4 + 1]
-        y = @arr[count * 4]
-        x = @arr[count * 4 + 3]
-
-        attributes = @arr[count * 4 + 2]
-        attr = (attributes & 3) + 4
-        prior = attributes[5] == 0
-        flip_h = attributes[6] == 1
-        flip_v = attributes[7] == 1
-        return tile, attr, flip_h, flip_v, x, y, prior
-      end
   end
 
   class Vram
