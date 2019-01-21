@@ -60,6 +60,7 @@ module Hongbai
 
     def insert_to(console)
       @console = console
+      @methods = Hash.new {|hash, key| hash[key] = method(key) }
       @ram0 = Array.new(0x400, 0)
       @ram1 = Array.new(0x400, 0)
 
@@ -70,11 +71,6 @@ module Hongbai
       require_relative "./mappers/mapper_#{@spec[:mapper]}"
       singleton_class.class_eval { include Mapper }
       mapper_init(prg_rom, chr_rom)
-    end
-
-    def cache_methods(ks)
-      @methods ||= {}
-      ks.each {|k| @methods[k] = method(k) }
     end
 
     def pre_compute_patterns(array)

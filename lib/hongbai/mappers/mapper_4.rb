@@ -43,14 +43,6 @@ module Hongbai
       @irq_enabled = false
       @irq_latch = 0
       @count = 0
-
-      cache_methods [
-        :write_8000, :write_8001, :write_a000, :write_a001,
-        :write_c000, :write_c001, :write_e000, :write_e001,
-        :read_nametable, :write_nametable, :nop, :nop_2,
-        :set_clock, :clock_counter, :read_pattern_table,
-        :read_prg_ram, :write_prg_ram,
-      ]
       @irq_function = [@methods[:set_clock], @methods[:nop]]
     end
 

@@ -14,11 +14,6 @@ module Hongbai
         @chr_rom = chr_rom
       end
       @pattern_table = pre_compute_patterns(@chr_rom)
-
-      cache_methods [
-        :read_ram0, :write_ram0, :read_ram1, :write_ram1, :prg_write,
-        :nop_write, :chr_write,
-      ]
     end
 
     attr_reader :pattern_table
