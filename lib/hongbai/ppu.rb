@@ -245,22 +245,25 @@ module Hongbai
         Fiber.yield
         # cycle 1
         set_vblank_end
-        1.step(255) { Fiber.yield }
-        # cycle 256
+        1.step(256, 8) { tile_fetch_8_cycles {} }
+        # still in cycle 256, fixme: should yield here
         @ppu_addr.y_increment if @rendering_enabled
-        Fiber.yield
         # cycle 257
         @ppu_addr.copy_x @tmp_addr if @rendering_enabled
-        Fiber.yield
-
-        258.step(279) { Fiber.yield }
-        # cycle 280-304
-        280.step(304) do
-          @ppu_addr.copy_y @tmp_addr if @rendering_enabled
-          Fiber.yield
+        257.step(280, 8) do
+          sprite_fetch_8_cycles { dummy_sprite_fetch }
+        end
+        # Copy_y happends EVERY cycle from 280 to 304
+        # This implementation just copies at cycle 281 and 305
+        @ppu_addr.copy_y @tmp_addr if @rendering_enabled
+        281.step(304, 8) do
+          sprite_fetch_8_cycles { dummy_sprite_fetch }
+        end
+        @ppu_addr.copy_y @tmp_addr if @rendering_enabled
+        305.step(320, 8) do
+          sprite_fetch_8_cycles { dummy_sprite_fetch }
         end
 
-        305.step(320) { Fiber.yield }
         321.step(336, 8) do 
           tile_fetch_8_cycles { @bg_buffer.shift }
         end
@@ -268,7 +271,8 @@ module Hongbai
       end
 
       def visible_scanline
-        # last 340 cycles of 341 cycles in total
+        # cycle 0 is not here
+        # only the last 340 cycles of the 341 cycles in total
         @x = 0
         # cycle 1-8
         tile_fetch_8_cycles { draw_point @left_most_render_function[] }
@@ -292,9 +296,7 @@ module Hongbai
         321.step(336, 8) do 
           tile_fetch_8_cycles { @bg_buffer.shift }
         end
-        # cycle 337-340
-        #read_nametable_byte
-        #read_nametable_byte
+
         scanline_cycle_337_to_340
       end
 
@@ -331,22 +333,30 @@ module Hongbai
         Fiber.yield
       end
 
+      def sprite_fetch_8_cycles
+        Fiber.yield
+        Fiber.yield
+        Fiber.yield
+        Fiber.yield
+        yield
+        Fiber.yield
+        Fiber.yield
+        Fiber.yield
+        Fiber.yield
+      end
+
       def scanline_cycle_257_to_320
         @ppu_addr.copy_x @tmp_addr if @rendering_enabled
         @sprite_buffer.clear
         # cycel 257 to 264
-        0.step(3) { Fiber.yield }
-        @oam2.peek ? sprite_fetch(@oam2.has_sprite_zero) : dummy_sprite_fetch
-        Fiber.yield
-        5.step(7) { Fiber.yield }
+        sprite_fetch_8_cycles do
+          @oam2.peek ? sprite_fetch(@oam2.has_sprite_zero) : dummy_sprite_fetch
+        end
 
         265.step(320, 8) do
-          0.step(3) { Fiber.yield }
-          # cycle 4
-          @oam2.peek ? sprite_fetch(false) : dummy_sprite_fetch
-          Fiber.yield
-
-          5.step(7) { Fiber.yield }
+          sprite_fetch_8_cycles do
+            @oam2.peek ? sprite_fetch(false) : dummy_sprite_fetch
+          end
         end
       end
 
@@ -379,6 +389,8 @@ module Hongbai
       end
 
       def scanline_cycle_337_to_340
+        #read_nametable_byte
+        #read_nametable_byte
         337.step(340) { Fiber.yield }
       end
 

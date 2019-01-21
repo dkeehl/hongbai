@@ -35,6 +35,10 @@ module Hongbai
       @update_function = @update_functions[0]
       @update_addr = UPDATE_ADDRS[@swap_mode][0]
 
+      # prg ram
+      @prg_ram_enabled = false
+      @prg_ram_writable = false
+
       # irq
       @irq_enabled = false
       @irq_latch = 0
@@ -45,6 +49,7 @@ module Hongbai
         :write_c000, :write_c001, :write_e000, :write_e001,
         :read_nametable, :write_nametable, :nop, :nop_2,
         :set_clock, :clock_counter, :read_pattern_table,
+        :read_prg_ram, :write_prg_ram,
       ]
       @irq_function = [@methods[:set_clock], @methods[:nop]]
     end
@@ -53,10 +58,16 @@ module Hongbai
       @methods[:read_pattern_table]
     end
 
-    def prg_read_method(_addr); @prg_data end
+    def prg_read_method(addr)
+      case addr
+      when (0x6000..0x7fff) then @methods[:read_prg_ram]
+      else @prg_data
+      end
+    end
 
     def prg_write_method(addr)
       case addr
+      when (0x6000..0x7fff) then @methods[:write_prg_ram]
       when (0x8000..0x9fff)
         addr.even? ? @methods[:write_8000] : @methods[:write_8001]
       when (0xa000..0xbfff)
@@ -84,7 +95,6 @@ module Hongbai
     end
 
     def write_8000(_addr, val)
-      #STDERR.puts "write 8000 val = %02x" % val
       select = val & 7
       @update_function = @update_functions[select]
       swap_mode = val >> 6
@@ -94,7 +104,6 @@ module Hongbai
     end
 
     def write_8001(_addr, val)
-      #STDERR.puts "write 8001 val = %02x" % val
       @update_function[val]
     end
 
@@ -103,7 +112,8 @@ module Hongbai
     end
 
     def write_a001(_addr, val)
-      # TODO
+      @prg_ram_enabled = val[7] == 1
+      @prg_ram_writable = @prg_ram_enabled && val[6] == 0
     end
 
     def write_c000(_addr, val)
@@ -125,7 +135,6 @@ module Hongbai
 
     # select 8K prg bank
     def update_prg(bank)
-      #STDERR.puts "update %04x, with prg bank #{bank} of #{@prg_banks.size}" % @update_addr
       @prg_data[@update_addr, 0x2000] = @prg_banks[bank % @prg_banks.size]
     end
 
@@ -191,6 +200,14 @@ module Hongbai
 
     def write_nametable(addr, val)
       @nametable[(addr >> 10) & 3][addr & 0x3ff] = val
+    end
+
+    def read_prg_ram(addr)
+      @prg_ram_enabled ? @prg_data[addr] : (addr >> 8)
+    end
+
+    def write_prg_ram(addr, val)
+      @prg_data[addr] = val if @prg_ram_writable
     end
 
     def nop; end
