@@ -95,6 +95,10 @@ module Hongbai
       end.flatten!(1)
     end
 
+    def nop; end
+    def nop_1(_); end
+    def nop_2(_, _); end
+
     private_class_method :new
   end
 

@@ -206,9 +206,6 @@ module Hongbai
     def write_prg_ram(addr, val)
       @prg_data[addr] = val if @prg_ram_writable
     end
-
-    def nop; end
-    def nop_2(_, _); end
   end
 
   Mapper = MMC3
