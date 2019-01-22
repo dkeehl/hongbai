@@ -20,6 +20,18 @@ module Hongbai
       end
     end
 
+    PATTERN_TABLE = (0..0xff).map do |bitmap_low|
+      (0..0xff).map do |bitmap_high|
+        (0..7).map do |attribute|
+          attribute <<= 2
+          (0..7).map do |x|
+            color = (bitmap_high[7 - x] << 1) | bitmap_low[7 - x]
+            color == 0 ? 0 : attribute | color
+          end
+        end
+      end
+    end
+
     VRAM_ADDR_INC = [1, 32]
 
     def initialize(rom, driver, context)
@@ -68,8 +80,6 @@ module Hongbai
       # PPU_STATUS
       @ppu_status = 0
       @in_vblank = false
-
-      @pattern_table = rom.pattern_table
 
       @output = Array.new(SCREEN_WIDTH * SCREEN_HEIGHT, 0xffffffff)
       @output_offset = 0
@@ -156,8 +166,8 @@ module Hongbai
       @tmp_addr.nametable_x      = val[0]
       @tmp_addr.nametable_y      = val[1]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
-      @sprite_pattern_table_addr = val[3] * 2048
-      @bg_pattern_table_addr     = val[4] * 2048
+      @sprite_pattern_table_addr = val[3] * 0x1000
+      @bg_pattern_table_addr     = val[4] * 0x1000
 
       @sprite_8x16_mode = val[5] == 1
       @sprite_height = @sprite_8x16_mode ? 16 : 8
@@ -370,22 +380,23 @@ module Hongbai
         if !@sprite_8x16_mode
           # 8*8 sprite mode
           y_inter = 7 - y_inter if flip_v
-          addr = @sprite_pattern_table_addr + tile * 8 + y_inter
+          addr = @sprite_pattern_table_addr + tile * 16 + y_inter
         else
           # 8*16 sprite mode
           y_inter = 15 - y_inter if flip_v
-          addr = Ppu.to_8x16_sprite_tile_addr(tile) * 8 + y_inter
+          addr = Ppu.to_8x16_sprite_tile_addr(tile) + y_inter
         end
 
-        colors = @pattern_table[addr]
-        colors = colors[attr]
+        bitmap_low = @vram.read(addr)
+        bitmap_high = @vram.read(addr + 8)
+        colors = PATTERN_TABLE[bitmap_low][bitmap_high][attr]
         colors = colors.reverse if flip_h
         @sprite_buffer.push_sprite(colors, x, prior, has_sprite_zero)
       end
 
       def dummy_sprite_fetch
-        addr = @sprite_8x16_mode ? 4080 : 2040 + @sprite_pattern_table_addr
-        @pattern_table[addr]
+        addr = @sprite_8x16_mode ? 0x1fe0 : 0xff0 + @sprite_pattern_table_addr
+        @vram.read addr
       end
 
       def scanline_cycle_337_to_340
@@ -399,12 +410,13 @@ module Hongbai
       end
 
       def get_tile_low
-        # Not really do a memory fetch, just determine the address of the pattern
-        @pattern_addr = @bg_pattern_table_addr + @tile_num * 8 + @ppu_addr.fine_y_offset
+        @pattern_addr = @bg_pattern_table_addr + @tile_num * 16 + @ppu_addr.fine_y_offset
+        @bitmap_low = @vram.read(@pattern_addr)
       end
 
       def get_tile_high
-        @pattern = @pattern_table[@pattern_addr][@attribute]
+        bitmap_high = @vram.read(@pattern_addr + 8)
+        @pattern = PATTERN_TABLE[@bitmap_low][bitmap_high][@attribute]
       end
 
       def reload_shift_register
@@ -525,8 +537,8 @@ module Hongbai
 
       # Integer -> Integer
       def self.to_8x16_sprite_tile_addr(tile_number)
-        bank = tile_number[0] * 256
-        bank + (tile_number & 0xfe)
+        bank = tile_number[0] * 0x1000
+        bank + (tile_number & 0xfe) * 16
       end
 
       def set_sprite_zero_hit

@@ -77,24 +77,6 @@ module Hongbai
       mapper_init(prg_rom, chr_rom)
     end
 
-    def pre_compute_patterns(array)
-      array.each_slice(16).map do |a|
-        plane0 = a[0, 8]
-        plane1 = a[8, 8]
-        (0..7).map do |y|
-          lo = plane0[y]
-          hi = plane1[y]
-          (0..7).map do |attribute|
-            attribute <<= 2
-            (0..7).map do |x|
-              color = (hi[7 - x] << 1) | lo[7 - x]
-              color == 0 ? 0 : attribute | color
-            end
-          end
-        end
-      end.flatten!(1)
-    end
-
     def nop; end
     def nop_1(_); end
     def nop_2(_, _); end
