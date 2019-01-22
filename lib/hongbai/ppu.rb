@@ -706,7 +706,7 @@ module Hongbai
       0.step(7) do |n|
         c = pattern[n]
         item = @items[i]
-        if item && (item.color == 0 || (above_bg && !item.above_bg))
+        if item && item.color == 0
           item.color = c
           item.from_sprite_0 = from_sprite_0
           item.above_bg = above_bg
