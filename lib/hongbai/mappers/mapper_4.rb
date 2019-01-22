@@ -10,6 +10,11 @@ module Hongbai
       [0x1000, 0x1800, 0x0000, 0x0400, 0x0800, 0x0c00, 0xc000, 0xa000], # mode 4 both swap
     ]
 
+    RANGE_8 = (0x8000..0x9fff)
+    RANGE_A = (0xa000..0xbfff)
+    RANGE_C = (0xc000..0xdfff)
+    RANGE_E = (0xe000..0xffff)
+
     def mapper_init(prg_rom, chr_rom)
       @prg_banks = prg_rom.each_slice(0x2000).to_a
       @chr_banks = chr_rom.each_slice(0x400).to_a
@@ -52,21 +57,21 @@ module Hongbai
 
     def prg_read_method(addr)
       case addr
-      when (0x6000..0x7fff) then @methods[:read_prg_ram]
+      when PRG_RAM_RANGE then @methods[:read_prg_ram]
       else @prg_data
       end
     end
 
     def prg_write_method(addr)
       case addr
-      when (0x6000..0x7fff) then @methods[:write_prg_ram]
-      when (0x8000..0x9fff)
+      when PRG_RAM_RANGE then @methods[:write_prg_ram]
+      when RANGE_8 
         addr.even? ? @methods[:write_8000] : @methods[:write_8001]
-      when (0xa000..0xbfff)
+      when RANGE_A
         addr.even? ? @methods[:write_a000] : @methods[:write_a001]
-      when (0xc000..0xdfff)
+      when RANGE_C
         addr.even? ? @methods[:write_c000] : @methods[:write_c001]
-      when (0xe000..0xffff)
+      when RANGE_E
         addr.even? ? @methods[:write_e000] : @methods[:write_e001]
       else @methods[:nop_2]
       end
@@ -74,15 +79,15 @@ module Hongbai
 
     def chr_read_method(addr)
       case addr
-      when (0..0x1fff) then @chr_data
-      when (0x2000..0x3f00) then @methods[:read_nametable]
+      when PATTERN_TABLE_RANGE then @chr_data
+      when NAMETABLE_RANGE then @methods[:read_nametable]
       end
     end
 
     def chr_write_method(addr)
       case addr
-      when (0..0x1fff) then @methods[:nop_2]
-      when (0x2000..0x3f00) then @methods[:write_nametable]
+      when PATTERN_TABLE_RANGE then @methods[:nop_2]
+      when NAMETABLE_RANGE then @methods[:write_nametable]
       end
     end
 

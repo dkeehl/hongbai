@@ -61,8 +61,8 @@ module Hongbai
 
     def chr_read_method(addr)
       case addr
-      when (0..0x1fff) then @chr_rom
-      when (0x2000..0x3fef)
+      when PATTERN_TABLE_RANGE then @chr_rom
+      when NAMETABLE_RANGE 
         bank = @spec[:mirroring].mirror(addr)
         @methods[:"read_ram#{bank}"]
       end
@@ -70,9 +70,9 @@ module Hongbai
 
     def chr_write_method(addr)
       case addr
-      when (0..0x1fff)
+      when PATTERN_TABLE_RANGE
         @allow_write_to_rom ? @methods[:chr_store] : @methods[:nop_write]
-      when (0x2000..0x3fef)
+      when NAMETABLE_RANGE
         bank = @spec[:mirroring].mirror(addr)
         @methods[:"write_ram#{bank}"]
       end

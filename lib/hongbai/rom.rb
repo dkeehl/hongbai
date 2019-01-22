@@ -1,4 +1,8 @@
 module Hongbai
+  PRG_RAM_RANGE = (0x6000..0x7fff)
+  PATTERN_TABLE_RANGE = (0..0x1fff)
+  NAMETABLE_RANGE = (0x2000..0x3fef)
+
   class Rom
     class << self
       def from_file(file)
