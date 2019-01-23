@@ -20,20 +20,6 @@ module Hongbai
       end
     end
 
-    PATTERN_TABLE = (0..0xff).map do |bitmap_low|
-      (0..0xff).map do |bitmap_high|
-        (0..7).map do |attribute|
-          attribute <<= 2
-          (0..7).map do |x|
-            color = (bitmap_high[7 - x] << 1) | bitmap_low[7 - x]
-            color == 0 ? 0 : attribute | color
-          end
-        end
-      end
-    end
-
-    VRAM_ADDR_INC = [1, 32]
-
     def initialize(rom, driver, context)
       @context = context
       @renderer = driver
@@ -162,6 +148,8 @@ module Hongbai
       addr < 0x3f00 ? buffered : val
     end
 
+    VRAM_ADDR_INC = [1, 32]
+
     def write_ppu_ctrl(_addr, val)
       @tmp_addr.nametable_x      = val[0]
       @tmp_addr.nametable_y      = val[1]
@@ -235,6 +223,66 @@ module Hongbai
         addr = @ppu_addr.to_i & 0x3fff
         @vram.write(addr, val)
         @ppu_addr.add @vram_addr_increment
+      end
+    end
+
+    def self.build_pattern(bitmap_low, bitmap_high, attribute)
+      attribute <<= 2
+      (0..7).map do |x|
+        color = (bitmap_high[7 - x] << 1) | bitmap_low[7 - x]
+        color == 0 ? 0 : attribute | color
+      end
+    end
+
+    PATTERN_TABLE = (0..0xff).map do |bitmap_low|
+      (0..0xff).map do |bitmap_high|
+        (0..7).map {|attribute| build_pattern(bitmap_low, bitmap_high, attribute) }
+      end
+    end
+
+    def self.to_8x16_sprite_tile_addr(tile_number)
+      bank = tile_number[0] * 0x1000
+      bank + (tile_number & 0xfe) * 16
+    end
+
+    # Pre-compute attributes for every address in a nametable
+    # with all 256 possible atribute bytes.
+    #
+    # Every 4*4 tiles share an attribute byte
+    # ________________
+    # |/|/|/|/|_|_|_|_
+    # |/|/|/|/|_|_|_|_
+    # |/|/|/|/|_|_|_|_
+    # |/|/|/|/|_|_|_|_
+    # |_|_|_|_|_|_|_|_
+    # |_|_|_|_|_|_|_|_
+    # |_|_|_|_|_|_|_|_
+    # | | | | | | | |
+    #
+    # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
+    # 4*4 tiles
+    #
+    # 7654 3210
+    # |||| ||++- topleft corner
+    # |||| ++--- topright corner
+    # ||++ ----- bottomleft corner
+    # ++-- ----- bottomright corner
+    ATTR_TABLE = (0..0xff).map do |val|
+      (0..0x3ff).map do |pos|
+        y, x = pos.divmod(32)
+        if y % 4 < 2
+          if x % 4 < 2 # topleft
+            val & 3
+          else # topright
+            (val >> 2) & 3
+          end
+        else
+          if x % 4 < 2 # bottomleft
+            (val >> 4) & 3
+          else # topright
+            (val >> 6) & 3
+          end
+        end
       end
     end
 
@@ -315,30 +363,39 @@ module Hongbai
         yield
         Fiber.yield
         # cycle 2
+        # read nametable byte
         yield
-        read_nametable_byte
+        tile_num = @vram.read(@ppu_addr.tile)
         Fiber.yield
         # cycle 3
         yield
         Fiber.yield
         # cycle 4
+        # read attr byte
         yield
-        read_attr_byte
+        byte = @vram.read(@ppu_addr.attribute)
+        attribute = ATTR_TABLE[byte][@ppu_addr.to_i & 0x3ff]
         Fiber.yield
         # cycle 5
         yield
         Fiber.yield
         # cycle 6
+        # get tile low
         yield
-        get_tile_low
+        addr = @bg_pattern_table_addr + (tile_num << 4) + @ppu_addr.fine_y_offset
+        bitmap_low = @vram.read(addr)
+        STDERR.puts "addr %04x" % addr unless bitmap_low
         Fiber.yield
         # cycle 7
         yield
         Fiber.yield
         # cycle 8
+        # get tile high
         yield
-        get_tile_high
-        reload_shift_register
+        bitmap_high = @vram.read(addr + 8)
+        pattern = PATTERN_TABLE[bitmap_low][bitmap_high][attribute]
+        # reload shift register
+        @bg_buffer[8, 8] = pattern
         @ppu_addr.coarse_x_increment if @rendering_enabled
         Fiber.yield
       end
@@ -380,7 +437,7 @@ module Hongbai
         if !@sprite_8x16_mode
           # 8*8 sprite mode
           y_inter = 7 - y_inter if flip_v
-          addr = @sprite_pattern_table_addr + tile * 16 + y_inter
+          addr = @sprite_pattern_table_addr + (tile << 4) + y_inter
         else
           # 8*16 sprite mode
           y_inter = 15 - y_inter if flip_v
@@ -405,24 +462,6 @@ module Hongbai
         337.step(340) { Fiber.yield }
       end
 
-      def read_nametable_byte
-        @tile_num = @vram.read(@ppu_addr.tile)
-      end
-
-      def get_tile_low
-        @pattern_addr = @bg_pattern_table_addr + @tile_num * 16 + @ppu_addr.fine_y_offset
-        @bitmap_low = @vram.read(@pattern_addr)
-      end
-
-      def get_tile_high
-        bitmap_high = @vram.read(@pattern_addr + 8)
-        @pattern = PATTERN_TABLE[@bitmap_low][bitmap_high][@attribute]
-      end
-
-      def reload_shift_register
-        @bg_buffer[8, 8] = @pattern
-      end
-
       def draw_point(color_index)
         @output[@output_offset] = @vga_palette[@color_function[color_index]]
         @output_offset += 1
@@ -444,52 +483,6 @@ module Hongbai
 
       def render_sprite
         @sprite_buffer[@x]
-      end
-
-      # Pre-compute attributes for every address in a nametable
-      # with all 256 possible atribute bytes.
-      #
-      # Every 4*4 tiles share an attribute byte
-      # ________________
-      # |/|/|/|/|_|_|_|_
-      # |/|/|/|/|_|_|_|_
-      # |/|/|/|/|_|_|_|_
-      # |/|/|/|/|_|_|_|_
-      # |_|_|_|_|_|_|_|_
-      # |_|_|_|_|_|_|_|_
-      # |_|_|_|_|_|_|_|_
-      # | | | | | | | |
-      #
-      # Every 2 bits of an arttribute byte controls a 2*2 corner of the group of
-      # 4*4 tiles
-      #
-      # 7654 3210
-      # |||| ||++- topleft corner
-      # |||| ++--- topright corner
-      # ||++ ----- bottomleft corner
-      # ++-- ----- bottomright corner
-      ATTR_TABLE = (0..0xff).map do |val|
-        (0..0x3ff).map do |pos|
-          y, x = pos.divmod(32)
-          if y % 4 < 2
-            if x % 4 < 2 # topleft
-              val & 3
-            else # topright
-              (val >> 2) & 3
-            end
-          else
-            if x % 4 < 2 # bottomleft
-              (val >> 4) & 3
-            else # topright
-              (val >> 6) & 3
-            end
-          end
-        end
-      end
-
-      def read_attr_byte
-        byte = @vram.read(@ppu_addr.attribute)
-        @attribute = ATTR_TABLE[byte][@ppu_addr.to_i & 0x3ff]
       end
 
       # Ppu -> nil
@@ -533,12 +526,6 @@ module Hongbai
       def sprite_on_scanline(sprite_y_offset)
         sprite_y_offset <= @scanline &&
           sprite_y_offset + @sprite_height > @scanline
-      end
-
-      # Integer -> Integer
-      def self.to_8x16_sprite_tile_addr(tile_number)
-        bank = tile_number[0] * 0x1000
-        bank + (tile_number & 0xfe) * 16
       end
 
       def set_sprite_zero_hit
