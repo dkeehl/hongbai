@@ -21,9 +21,6 @@ module Hongbai
       @prg_data = Array.new(0x10000, 0)
       @chr_data = Array.new(0x2000, 0)
 
-      @pattern_banks = @chr_banks.map {|bank| pre_compute_patterns bank }
-      @pattern_table = Array.new(0x1000, Array.new(8, [0] * 8))
-
       # initialize prg address $c000-$ffff
       @prg_data[0xc000, 0x2000] = @prg_banks[-2]
       @prg_data[0xe000, 0x2000] = @prg_banks[-1] 
@@ -51,10 +48,6 @@ module Hongbai
       @irq_function = [@methods[:set_clock], @methods[:nop]]
     end
 
-    def pattern_table
-      @methods[:read_pattern_table]
-    end
-
     def prg_read_method(addr)
       case addr
       when PRG_RAM_RANGE then @methods[:read_prg_ram]
@@ -79,7 +72,7 @@ module Hongbai
 
     def chr_read_method(addr)
       case addr
-      when PATTERN_TABLE_RANGE then @chr_data
+      when PATTERN_TABLE_RANGE then @methods[:read_pattern_table]
       when NAMETABLE_RANGE then @methods[:read_nametable]
       end
     end
@@ -137,19 +130,14 @@ module Hongbai
 
     # select 1k chr bank
     def update_chr_1(bank)
-      bank %= @chr_banks.size
-      @chr_data[@update_addr, 0x400] = @chr_banks[bank]
-      @pattern_table[@update_addr >> 1, 0x200] = @pattern_banks[bank]
+      @chr_data[@update_addr, 0x400] = @chr_banks[bank % @chr_banks.size]
     end
 
     # select 2k chr bank
     def update_chr_2(bank)
       bank = (bank & 0xfe) % @chr_banks.size
-      pattern_addr = @update_addr >> 1
       @chr_data[@update_addr, 0x400] = @chr_banks[bank]
-      @pattern_table[pattern_addr, 0x200] = @pattern_banks[bank]
       @chr_data[@update_addr + 0x400, 0x400] = @chr_banks[bank + 1]
-      @pattern_table[pattern_addr + 0x200, 0x200] = @pattern_banks[bank + 1]
     end
 
     def swap_prg
@@ -159,20 +147,18 @@ module Hongbai
 
     def swap_chr
       @chr_data.rotate! 0x1000
-      @pattern_table.rotate! 0x800
     end
 
     def swap_prg_and_chr
       @prg_data[0x8000, 0x2000], @prg_data[0xc000, 0x2000] =
         @prg_data[0xc000, 0x2000], @prg_data[0x8000, 0x2000]
       @chr_data.rotate! 0x1000
-      @pattern_table.rotate! 0x800
     end
 
     # IRQ clock is not accurate. Only applies to the most normal case.
-    def read_pattern_table(tile_num)
-      @irq_function[tile_num[11]].call
-      @pattern_table[tile_num]
+    def read_pattern_table(addr)
+      @irq_function[addr[12]].call
+      @chr_data[addr]
     end
 
     def set_clock
