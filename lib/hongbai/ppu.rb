@@ -240,9 +240,12 @@ module Hongbai
       end
     end
 
-    def self.to_8x16_sprite_tile_addr(tile_number)
-      bank = tile_number[0] * 0x1000
-      bank + (tile_number & 0xfe) * 16
+    def self.to_8x16_sprite_tile_addr(tile_number, fine_y)
+      (tile_number[0] << 12) + ((tile_number & 0xfe) << 4) + (fine_y[3] << 4) + (fine_y & 7)
+    end
+
+    SPRITE_16_ADDR = (0..0xff).map do |tile_number|
+      (0..0xf).map {|fine_y| to_8x16_sprite_tile_addr(tile_number, fine_y) }
     end
 
     # Pre-compute attributes for every address in a nametable
@@ -384,7 +387,6 @@ module Hongbai
         yield
         addr = @bg_pattern_table_addr + (tile_num << 4) + @ppu_addr.fine_y_offset
         bitmap_low = @vram.read(addr)
-        STDERR.puts "addr %04x" % addr unless bitmap_low
         Fiber.yield
         # cycle 7
         yield
@@ -441,7 +443,7 @@ module Hongbai
         else
           # 8*16 sprite mode
           y_inter = 15 - y_inter if flip_v
-          addr = Ppu.to_8x16_sprite_tile_addr(tile) + y_inter
+          addr = SPRITE_16_ADDR[tile][y_inter]
         end
 
         bitmap_low = @vram.read(addr)
