@@ -23,6 +23,7 @@ module Hongbai
         prg_rom_size, chr_rom_size, flag6, flag7, _prg_ram_size, flag9 = header[4..9]
         spec[:prg_rom_size] = prg_rom_size * 0x4000
         spec[:chr_rom_size] = chr_rom_size * 0x2000
+        spec[:use_chr_ram] = chr_rom_size == 0
         spec[:has_prg_ram] = flag6[1] == 1
         spec[:has_trainer] = flag6[2] == 1
         spec[:mapper] = (flag7 & 0xf0) | (flag6 >> 4)
@@ -73,7 +74,7 @@ module Hongbai
       chr_rom = @buf.slice!(0, @spec[:chr_rom_size])
 
       require_relative "./mappers/mapper_#{@spec[:mapper]}"
-      singleton_class.class_eval { include Mapper }
+      singleton_class.include Mapper
       mapper_init(prg_rom, chr_rom)
     end
 
