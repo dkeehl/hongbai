@@ -37,13 +37,15 @@ module Hongbai
 
     SEQUENCERS = [MODE_0, MODE_1]
 
-    def initialize
+    def initialize(console)
+      @console = console
+
       # channels
-      @pulse_1 = Pulse.new(self)
-      @pulse_2 = Pulse.new(self, true)
+      @pulse_1 = Pulse.new
+      @pulse_2 = Pulse.new(true)
       @triangle = Triangle.new
       @noise = Noise.new
-      @dmc = Dmc.new
+      @dmc = Dmc.new(console)
 
       @mixer = Mixer.new(@pulse_1, @pulse_2, @triangle, @noise, @dmc)
       @buffer = []
@@ -56,9 +58,6 @@ module Hongbai
       @cycles_until_next_step = @sequencer[@step].cycles
       @frame_interrupt = false
       @interrupt_inhibit = false
-      # Because writings to 4017 have different effects upon different cpu cycles,
-      # need this buffer
-      @val_4017 = nil
 
       # For resampling
       @filter = Filter.new
@@ -93,7 +92,7 @@ module Hongbai
 
       # FIXME: if an frame interrupt flag was set at the same moment of the read,
       # it will read back as 1, but it will not be cleard
-      @frame_interrupt = false
+      @console.apu_frame_irq = @frame_interrupt = false
 
       p1 + p2 + t + n + d + f + i
     end
@@ -110,7 +109,7 @@ module Hongbai
 
     def write_4017(_addr, val)
       @interrupt_inhibit = val[6] == 1
-      @frame_interrupt = false if @interrupt_inhibit 
+      @console.apu_frame_irq = @frame_interrupt = false if @interrupt_inhibit 
 
       @sequencer = SEQUENCERS[val[7]]
       @step = @cycle.odd? ? 0 : 1
@@ -179,7 +178,7 @@ module Hongbai
             @noise.clock_length_counter
           end
 
-          @frame_interrupt = true if this_step.clk_irq && !@interrupt_inhibit
+          @console.apu_frame_irq = @frame_interrupt = true if this_step.clk_irq && !@interrupt_inhibit
 
           @step = this_step.next_step
           @cycles_until_next_step = @sequencer[@step].cycles
@@ -194,8 +193,7 @@ module Hongbai
       (0..7).map {|i| n[7 - i] }
     end
 
-    def initialize(apu, pulse_2 = false)
-      @apu = apu
+    def initialize(pulse_2 = false)
       # Sweep unit
       @sweep_reload = false
       @sweep_enabled = false
@@ -508,7 +506,8 @@ module Hongbai
       428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54
     ].map {|n| n / 2 } # devide cpu cycles by 2 because we are clocking dmc every 2 cycles
 
-    def initialize
+    def initialize(console)
+      @console = console
       @enabled = false
 
       @rate = RATE_TABLE[0]
@@ -547,7 +546,7 @@ module Hongbai
 
     def write_0(_addr, val)
       @enable_interrupt = val[7] == 1
-      @interrupt = false if !@enable_interrupt
+      @console.apu_dmc_irq = @interrupt = false if !@enable_interrupt
       @loop = val[6] == 1
       @rate = RATE_TABLE[val & 0xf]
     end
@@ -565,7 +564,7 @@ module Hongbai
     end
 
     def clear_interrupt
-      @interrupt = false
+      @console.apu_dmc_irq = @interrupt = false
     end
 
     def clock
@@ -597,7 +596,7 @@ module Hongbai
           @current_address = @sample_address
           @bytes_remaining = @sample_length
         else
-          @interrupt = true if @enable_interrupt
+          @console.apu_dmc_irq = @interrupt = true if @enable_interrupt
         end
       end
     end

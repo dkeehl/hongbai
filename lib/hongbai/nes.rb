@@ -37,7 +37,7 @@ module Hongbai
       @input = input
       @rom = rom
       @rom.insert_to(self)
-      @apu = Apu.new
+      @apu = Apu.new(self)
       @ppu = Ppu.new(rom, video, self)
       @cpu = Cpu.new(self)
       @ram = Array.new(0x800, 0)
@@ -157,7 +157,7 @@ module Hongbai
 
       def on_cpu_cycle
         @cycle += 1
-        #@apu.step
+        @apu.step
         @ppu.main_loop.resume
         @ppu.main_loop.resume
         @ppu.main_loop.resume
@@ -182,7 +182,7 @@ module Hongbai
         @write_map[addr] = write
       end
 
-      def init_memory_map(rom)
+      def init_memory_map
         # Memory map
         # $0000 - $07ff 2KB internal RAM
         (0..0x7ff).each do |i|
