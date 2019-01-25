@@ -49,8 +49,7 @@ module Hongbai
       @sp = 0xfd #Stack Pointer
       @p = StatusRegister.new
       @p.load(0x34)
-      @pc = read_u16(RESET_VECTOR)
-      @m.reset
+      @pc = 0
 
       @operand_addr = nil
       @address_carry = nil
@@ -58,6 +57,12 @@ module Hongbai
     end
 
     attr_accessor :trace
+
+    def reset
+      @sp = 0xfd #Stack Pointer
+      @p.load(0x34)
+      @pc = read_u16(RESET_VECTOR)
+    end
 
     def step
       opcode = @m.fetch(@pc)
