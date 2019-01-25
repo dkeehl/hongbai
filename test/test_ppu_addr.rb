@@ -1,4 +1,5 @@
-require './ppu_address'
+require_relative 'helper'
+require 'hongbai/ppu_address'
 require 'minitest/autorun'
 
 class Hongbai::Address

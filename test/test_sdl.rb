@@ -1,5 +1,6 @@
-require_relative 'sdl/video'
-require_relative './ppu'
+require_relative 'helper'
+require 'hongbai/sdl/video'
+require 'hongbai/ppu'
 
 module Hongbai
   module TestSDL

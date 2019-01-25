@@ -1,5 +1,6 @@
+require_relative 'helper'
 require 'minitest/autorun'
-require_relative './rom'
+require 'hongbai/rom'
 
 class RomTest < MiniTest::Test
   def test_file_load_ok

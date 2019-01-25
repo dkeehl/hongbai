@@ -1,4 +1,5 @@
-require_relative 'sdl/audio'
+require_relative 'helper'
+require 'hongbai/sdl/audio'
 
 module Hongbai
   class Wav
