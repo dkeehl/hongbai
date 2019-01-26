@@ -1,9 +1,12 @@
 require_relative 'sdl/sdl2'
-require_relative './cpu'
-require_relative './ppu'
-require_relative './apu'
-require_relative './rom'
-require_relative './input'
+require_relative 'sdl/video'
+require_relative 'sdl/audio'
+require_relative 'sdl/event'
+require_relative 'cpu'
+require_relative 'ppu'
+require_relative 'apu'
+require_relative 'rom'
+require_relative 'input'
 
 module Hongbai
   class Nes
@@ -16,28 +19,30 @@ module Hongbai
                                   SDL2::Window::POS_CENTERED,
                                   SCREEN_WIDTH, SCREEN_HEIGHT, 0)
         video = SDL2::Video.new(win)
+        audio = SDL2::Audio.new(44100, 32, 1)
         map = KeyMap.default_1p
         controller = Controller.new(map)
         input = Input.new(controller)
 
-        nes = new(rom, video, input)
+        nes = new(rom, video, audio, input)
         nes.reset
         begin
           t = Time.now
           loop { nes.step }
         ensure
           dur = Time.now - t
+          audio.close
           frames = nes.frame
           puts "#{frames} frames in %.1f seconds, %.1f FPS" % [dur, frames / dur]
         end
       end
     end
 
-    def initialize(rom, video, input)
+    def initialize(rom, video, audio, input)
       @input = input
       @rom = rom
       @rom.insert_to(self)
-      @apu = Apu.new(self)
+      @apu = Apu.new(audio, self)
       @ppu = Ppu.new(rom, video, self)
       @cpu = Cpu.new(self)
       @ram = Array.new(0x800, 0)

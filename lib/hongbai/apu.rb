@@ -37,7 +37,8 @@ module Hongbai
 
     SEQUENCERS = [MODE_0, MODE_1]
 
-    def initialize(console)
+    def initialize(driver, console)
+      @audio = driver
       @console = console
 
       # channels
@@ -121,11 +122,8 @@ module Hongbai
     end
 
     def flush
+      @audio.process @buffer
       @buffer.clear
-    end
-
-    def save_file
-      #File.binwrite("sound", @buffer.pack("e*"))
     end
 
     private
