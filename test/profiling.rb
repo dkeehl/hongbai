@@ -1,7 +1,6 @@
 require_relative 'helper'
 require 'hongbai/cpu'
 require 'hongbai/ppu'
-require 'hongbai/mem'
 require 'hongbai/dummy'
 require 'hongbai/rom'
 require 'hongbai/nes'
@@ -11,8 +10,9 @@ require 'benchmark'
 module Hongbai
   class NoSDL < Nes
     def self.run_profiling(path)
-      if rom = INes.from_file(path)
+      if rom = Rom.from_file(path)
         nes = dummy_nes(rom)
+        nes.reset
         RubyProf.start
         20_000.times { nes.step }
         res = RubyProf.stop
@@ -22,8 +22,9 @@ module Hongbai
     end
 
     def self.run_benchmark(path)
-      if rom = INes.from_file(path)
+      if rom = Rom.from_file(path)
         nes = dummy_nes(rom)
+        nes.reset
         Benchmark.bm do |x|
           x.report { 20_000.times do; nes.step end }
         end
@@ -31,14 +32,14 @@ module Hongbai
     end
 
     def self.dummy_nes(rom)
-      win = Dummy::Window.new
-      video = Dummy::Video.new(win)
+      video = Dummy::Video.new
+      audio = Dummy::Audio.new
       input = Dummy::Input.new
-      new(rom, video, input)
+      new(rom, video, audio, input)
     end
   end
 
-  path = File.expand_path("../../../nes/test.nes", __FILE__)
+  path = File.expand_path("../../nes/test.nes", __FILE__)
   NoSDL.run_profiling(path)
   #NoSDL.run_benchmark(path)
 end

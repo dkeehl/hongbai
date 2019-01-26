@@ -1,4 +1,3 @@
-require_relative './sdl/video'
 require_relative './ppu_address'
 
 module Hongbai
@@ -20,8 +19,8 @@ module Hongbai
       end
     end
 
-    def initialize(rom, driver, context)
-      @context = context
+    def initialize(rom, driver, console)
+      @console = console
       @renderer = driver
       vram_palette = Palette.new
       @vram = Vram.new(rom, vram_palette)
@@ -112,7 +111,7 @@ module Hongbai
         @output_offset = 0
         @scanline = 0
         @even_frame = !@even_frame
-        @context.on_new_frame
+        @console.on_new_frame
         pre_render_scanline
       end
     end
@@ -163,7 +162,7 @@ module Hongbai
       vblank_orig = @generate_vblank_nmi
       @generate_vblank_nmi = val[7] == 1
       if !vblank_orig && @generate_vblank_nmi && @ppu_status[7] == 1
-        @context.nmi = true
+        @console.nmi = true
       end
     end
 
@@ -297,7 +296,7 @@ module Hongbai
       def vblank_scanline
         Fiber.yield
         set_vblank_start
-        @context.nmi = @generate_vblank_nmi
+        @console.nmi = true if @generate_vblank_nmi
         1.step(340) { Fiber.yield }
       end
 

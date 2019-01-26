@@ -1,5 +1,3 @@
-require_relative 'sdl/event'
-
 module Hongbai
   class Controller
     BUTTON_A = 0

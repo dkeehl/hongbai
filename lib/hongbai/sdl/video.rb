@@ -1,4 +1,4 @@
-require_relative './sdl2'
+require_relative 'sdl2'
 
 module Hongbai
   module SDL2
