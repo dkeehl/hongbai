@@ -530,7 +530,7 @@ module Hongbai
       @silence = true
     end
 
-    attr_reader :interrupt, :bytes_remaining, :current_address
+    attr_reader :interrupt, :bytes_remaining, :current_address, :output
 
     def enable=(b)
       @enabled = b
@@ -540,6 +540,7 @@ module Hongbai
         @current_address = @sample_address
         @bytes_remaining = @sample_length
       end
+      @console.active_dmc_dma = @bytes_remaining != 0 && @sample_buffer.nil?
     end
 
     def write_0(_addr, val)
@@ -576,16 +577,9 @@ module Hongbai
       end
     end
 
-    def sample
-      @output
-    end
-
-    def should_activate_dma?
-      @sample_buffer.nil? && @bytes_remaining != 0
-    end
-
     def dma_write(val)
       @sample_buffer = val
+      @console.active_dmc_dma = false
       @current_address += 1
       @current_address -= 0x8000 if @current_address > 0xffff
       @bytes_remaining -= 1
@@ -610,12 +604,13 @@ module Hongbai
 
       def new_cycle
         @bits_remaining = 8
-        if @sample_buffer.nil?
+        unless @sample_buffer
           @silence = true
         else
           @silence = false
           @shift = @sample_buffer
           @sample_buffer = nil
+          @console.active_dmc_dma = @bytes_remaining != 0
         end
       end
   end
@@ -637,7 +632,7 @@ module Hongbai
       pulse_2 = @pulse_2.sample
       triangle = @triangle.sample
       noise = @noise.sample
-      dmc = @dmc.sample
+      dmc = @dmc.output
 
       pulse_out = PULSE_TABLE[pulse_1 + pulse_2]
       tnd_out = TND_TABLE[3 * triangle + 2 * noise + dmc]

@@ -43,6 +43,7 @@ module Hongbai
       @rom = rom
       @rom.insert_to(self)
       @apu = Apu.new(audio, self)
+      @dmc = @apu.dmc
       @ppu = Ppu.new(rom, video, self)
       @cpu = Cpu.new(self)
       @ram = Array.new(0x800, 0)
@@ -51,6 +52,7 @@ module Hongbai
       @write_map = Array.new(0x10000)
 
       @oam_dma_triggered = nil
+      @active_dmc_dma = false
 
       @nmi = false
       @irq = false
@@ -67,7 +69,7 @@ module Hongbai
     end
 
     attr_reader :frame
-    attr_writer :nmi
+    attr_writer :nmi, :active_dmc_dma
 
     def reset
       @cpu.reset
@@ -109,7 +111,7 @@ module Hongbai
     end
 
     def read(addr)
-      do_dmc_dma(addr) if @apu.dmc.should_activate_dma?
+      do_dmc_dma(addr) if @active_dmc_dma
       do_oam_dma(addr) if @oam_dma_triggered
       ret = @read_map[addr][addr]
       on_cpu_cycle
@@ -139,8 +141,8 @@ module Hongbai
         dma_read addr # halt
         dma_read addr # extra dmc dummy_read
         dma_read addr if @cycle.odd?
-        val = dma_read(@apu.dmc.current_address)
-        @apu.dmc.dma_write val
+        val = dma_read(@dmc.current_address)
+        @dmc.dma_write val
       end
 
       def do_oam_dma(addr)
@@ -152,9 +154,9 @@ module Hongbai
           val = dma_read(start + i)
           on_cpu_cycle
           @ppu.write_oam_data(0x2004, val)
-          if @apu.dmc.should_activate_dma?
-            val = dma_read(@apu.dmc.current_address)
-            @apu.dmc.dma_write val
+          if @active_dmc_dma
+            val = dma_read(@dmc.current_address)
+            @dmc.dma_write val
             dma_read addr
           end
         end
