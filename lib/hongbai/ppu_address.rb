@@ -1,54 +1,38 @@
 module Hongbai
   class Address
-    FINE_Y_OFFSET_FIT = 0b111
-    FINE_Y_OFFSET_OFFSET = 12
-    FINE_Y_OFFSET_MASK = 0xfff
-
-    NAMETABLE_Y_FIT = 1
-    NAMETABLE_Y_OFFSET = 11
-    NAMETABLE_Y_MASK = 0b111_0111_1111_1111
-
-    NAMETABLE_X_FIT = 1
-    NAMETABLE_X_OFFSET = 10
-    NAMETABLE_X_MASK = 0b111_1011_1111_1111
-
-    COARSE_Y_OFFSET_FIT = 0b1_1111
-    COARSE_Y_OFFSET_OFFSET = 5
-    COARSE_Y_OFFSET_MASK = 0b111_1100_0001_1111
-
-    COARSE_X_OFFSET_FIT = 0b1_1111
-    COARSE_X_OFFSET_OFFSET = 0
-    COARSE_X_OFFSET_MASK = 0b111_1111_1110_0000
-
-    names = %w[fine_y_offset nametable_y nametable_x coarse_y_offset coarse_x_offset]
-    names.each do |name|
-      fit = const_get("#{name.upcase}_FIT".to_sym)
-      mask = const_get("#{name.upcase}_MASK".to_sym)
-      offset = const_get("#{name.upcase}_OFFSET".to_sym)
-
-      get = "(@val >> #{offset}) & #{fit}"
-      set = "@val = (@val & #{mask}) ^ (x << #{offset})"
-      class_eval("def #{name}; #{get} end\n"\
-                 "def #{name}=(x); #{set} end")
-    end
-
     def initialize
+      @tmp_nametable_x = 0
+      @tmp_nametable_y = 0
+      @tmp_coarse_x_offset = 0
+      @tmp_coarse_y_offset = 0
+      @tmp_fine_y_offset = 0
+
       @val = 0
     end
 
-    def switch_h
-      #self.nametable_x ^= 1
-      @val ^= 0b100_0000_0000
+    attr_writer :tmp_nametable_x, :tmp_nametable_y, :tmp_fine_y_offset,
+                :tmp_coarse_x_offset, :tmp_coarse_y_offset 
+
+    def update_lo(val)
+      @tmp_coarse_x_offset = val & 0x1f
+      @tmp_coarse_y_offset = @tmp_coarse_y_offset & 0x18 | (val >> 5)
     end
 
-    def switch_v
-      #self.nametable_y ^= 1
-      @val ^= 0b1000_0000_0000
+    def update_hi(val)
+      @tmp_coarse_y_offset = @tmp_coarse_y_offset & 7 | ((val & 3) << 3)
+      @tmp_nametable_x     = val[2]
+      @tmp_nametable_y     = val[3]
+      @tmp_fine_y_offset   = (val >> 4) & 3
+    end
+
+    def fine_y_offset
+      @val >> 12
     end
 
     def coarse_x_increment
-      if self.coarse_x_offset == 31
-        # self.coarse_x_offset = 0
+      # if coarse_x_offset == 31
+      if @val & 0x1f == 31
+        # coarse_x_offset = 0
         # switch_h
         @val ^= 0b100_0001_1111
       else
@@ -57,41 +41,50 @@ module Hongbai
     end
 
     def y_increment
-      fine_y = self.fine_y_offset
+      fine_y = @val >> 12
       if fine_y < 7
-        # self.fine_y_offset = fine_y + 1
+        # fine_y_offset = fine_y + 1
         @val += 0x1000
       else
-        # self.fine_y_offset = 0
+        # fine_y_offset = 0
         @val &= 0xfff
-        y = self.coarse_y_offset
+        # coarse_y_offset
+        y = (@val >> 5) & 0x1f
         if y == 29
-          # self.coarse_y_offset = 0
+          # coarse_y_offset = 0
           # switch_v
           @val ^= 0b1011_1010_0000
         elsif y == 31
-          # self.coarse_y_offset = 0
+          # coarse_y_offset = 0
           @val ^= 0b11_1110_0000
         else
-          # self.coarse_y_offset = y + 1
+          # coarse_y_offset = y + 1
           @val += 32
         end
       end
     end
 
-    def copy_x(other)
-      self.nametable_x = other.nametable_x
-      self.coarse_x_offset = other.coarse_x_offset
+    def copy_x
+      # nametable_x = @tmp_nametable_x
+      # coarse_x_offset = @tmp_coarse_x_offset
+      @val = (@val & 0b111_1011_1110_0000) | (@tmp_nametable_x << 10) | @tmp_coarse_x_offset
     end
 
-    def copy_y(other)
-      self.fine_y_offset = other.fine_y_offset
-      self.nametable_y = other.nametable_y
-      self.coarse_y_offset = other.coarse_y_offset
+    def copy_y
+      # fine_y_offset = @tmp_fine_y_offset
+      # nametable_y = @tmp_nametable_y
+      # coarse_y_offset = @tmp_coarse_y_offset
+      @val = (@val & 0b100_0001_1111) | (@tmp_fine_y_offset << 12) |
+        (@tmp_nametable_y << 11) | (@tmp_coarse_y_offset << 5)
     end
 
-    def copy(other)
-      @val = other.to_i
+    def copy_tmp
+      @val =
+        (@tmp_fine_y_offset   << 12) |
+        (@tmp_nametable_y     << 11) |
+        (@tmp_nametable_x     << 10) |
+        (@tmp_coarse_y_offset <<  5) |
+         @tmp_coarse_x_offset
     end
 
     # Into the address of the tile which this address points to 
@@ -123,35 +116,8 @@ module Hongbai
       @val += n
     end
 
-    def to_i; @val end
-  end
+    def pos_in_nametable; @val & 0x3ff end
 
-  class TempAddress
-    def initialize
-      @nametable_x = 0
-      @nametable_y = 0
-      @coarse_x_offset = 0
-      @coarse_y_offset = 0
-      @fine_y_offset = 0
-    end
-
-    attr_accessor :nametable_x, :nametable_y, :coarse_x_offset, :coarse_y_offset, :fine_y_offset
-
-    def update_lo(val)
-      @coarse_x_offset = val & 0x1f
-      @coarse_y_offset = @coarse_y_offset & 0x18 | (val >> 5)
-    end
-
-    def update_hi(val)
-      @coarse_y_offset = @coarse_y_offset & 7 | ((val & 3) << 3)
-      @nametable_x = val[2]
-      @nametable_y = val[3]
-      @fine_y_offset = (val >> 4) & 3
-    end
-
-    def to_i
-      (@fine_y_offset << 12) | (@nametable_y << 11) | (@nametable_x << 10) |
-      (@coarse_y_offset << 5) | @coarse_x_offset
-    end
+    def to_i; @val & 0x3fff end
   end
 end

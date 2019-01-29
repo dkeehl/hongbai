@@ -45,7 +45,6 @@ module Hongbai
       @generate_vblank_nmi = false
       # PPU_ADDR & PPU_SCROLL
       @ppu_addr = Address.new
-      @tmp_addr = TempAddress.new
       @fine_x_offset = 0
       @toggle = false
       @ppu_data_read_buffer = 0
@@ -137,7 +136,7 @@ module Hongbai
         @ppu_addr.y_increment
       else
         # Mirror down addresses greater than 0x3fff
-        addr = @ppu_addr.to_i & 0x3fff
+        addr = @ppu_addr.to_i
         @ppu_addr.add @vram_addr_increment
       end
       val = @vram.read(addr)
@@ -150,8 +149,8 @@ module Hongbai
     VRAM_ADDR_INC = [1, 32]
 
     def write_ppu_ctrl(_addr, val)
-      @tmp_addr.nametable_x      = val[0]
-      @tmp_addr.nametable_y      = val[1]
+      @ppu_addr.tmp_nametable_x  = val[0]
+      @ppu_addr.tmp_nametable_y  = val[1]
       @vram_addr_increment       = VRAM_ADDR_INC[val[2]]
       @sprite_pattern_table_addr = val[3] * 0x1000
       @bg_pattern_table_addr     = val[4] * 0x1000
@@ -190,21 +189,21 @@ module Hongbai
 
     def write_ppu_scroll(_addr, val)
       if @toggle # toggle is true, the second write
-        @tmp_addr.fine_y_offset = val & 7
-        @tmp_addr.coarse_y_offset = val >> 3
+        @ppu_addr.tmp_fine_y_offset   = val & 7
+        @ppu_addr.tmp_coarse_y_offset = val >> 3
       else
         @fine_x_offset = val & 7
-        @tmp_addr.coarse_x_offset = val >> 3
+        @ppu_addr.tmp_coarse_x_offset = val >> 3
       end
       @toggle = !@toggle
     end
 
     def write_ppu_addr(_addr, val)
       if @toggle
-        @tmp_addr.update_lo val
-        @ppu_addr.copy @tmp_addr
+        @ppu_addr.update_lo val
+        @ppu_addr.copy_tmp
       else
-        @tmp_addr.update_hi val
+        @ppu_addr.update_hi val
       end
       @toggle = !@toggle
     end
@@ -219,7 +218,7 @@ module Hongbai
         @ppu_addr.y_increment
       else
         # Mirror down addresses greater than 0x3fff
-        addr = @ppu_addr.to_i & 0x3fff
+        addr = @ppu_addr.to_i
         @vram.write(addr, val)
         @ppu_addr.add @vram_addr_increment
       end
@@ -309,17 +308,17 @@ module Hongbai
         # still in cycle 256, fixme: should yield here
         @ppu_addr.y_increment if @rendering_enabled
         # cycle 257
-        @ppu_addr.copy_x @tmp_addr if @rendering_enabled
+        @ppu_addr.copy_x if @rendering_enabled
         257.step(280, 8) do
           sprite_fetch_8_cycles { dummy_sprite_fetch }
         end
         # Copy_y happends EVERY cycle from 280 to 304
         # This implementation just copies at cycle 281 and 305
-        @ppu_addr.copy_y @tmp_addr if @rendering_enabled
+        @ppu_addr.copy_y if @rendering_enabled
         281.step(304, 8) do
           sprite_fetch_8_cycles { dummy_sprite_fetch }
         end
-        @ppu_addr.copy_y @tmp_addr if @rendering_enabled
+        @ppu_addr.copy_y if @rendering_enabled
         305.step(320, 8) do
           sprite_fetch_8_cycles { dummy_sprite_fetch }
         end
@@ -376,7 +375,7 @@ module Hongbai
         # read attr byte
         yield
         byte = @vram.read(@ppu_addr.attribute)
-        attribute = ATTR_TABLE[byte][@ppu_addr.to_i & 0x3ff]
+        attribute = ATTR_TABLE[byte][@ppu_addr.pos_in_nametable]
         Fiber.yield
         # cycle 5
         yield
@@ -414,7 +413,7 @@ module Hongbai
       end
 
       def scanline_cycle_257_to_320
-        @ppu_addr.copy_x @tmp_addr if @rendering_enabled
+        @ppu_addr.copy_x if @rendering_enabled
         @sprite_buffer.clear
         # cycel 257 to 264
         sprite_fetch_8_cycles do
