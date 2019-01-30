@@ -69,12 +69,6 @@ module Hongbai
     attr_reader :pulse_1, :pulse_2, :triangle, :noise, :dmc, :frame_interrupt,
       :cycle
 
-    def run
-      # one step per cpu cycle
-      # 1.789773MHz
-      loop { step }
-    end
-
     def step
       clock_channels
       clock_frame_counter
@@ -160,9 +154,9 @@ module Hongbai
 
           # quarter frames clock envelopes and triangle' linear counter
           if this_step.gen_quarter_frame_signals
-            @pulse_1.clock_envelope
-            @pulse_2.clock_envelope
-            @noise.clock_envelope
+            @pulse_1.envelope.clock
+            @pulse_2.envelope.clock
+            @noise.envelope.clock
             @triangle.clock_linear_counter
           end
 
@@ -170,10 +164,10 @@ module Hongbai
           if this_step.gen_half_frame_signals
             @pulse_1.clock_sweep_unit
             @pulse_2.clock_sweep_unit
-            @pulse_1.clock_length_counter
-            @pulse_2.clock_length_counter
-            @triangle.clock_length_counter
-            @noise.clock_length_counter
+            @pulse_1.length_counter.clock
+            @pulse_2.length_counter.clock
+            @triangle.length_counter.clock
+            @noise.length_counter.clock
           end
 
           @console.apu_frame_irq = @frame_interrupt = true if this_step.clk_irq && !@interrupt_inhibit
@@ -213,7 +207,7 @@ module Hongbai
       @length_counter = LengthCounter.new
     end
 
-    attr_accessor :length_counter
+    attr_accessor :length_counter, :envelope
 
     def write_0(_addr, val)
       @envelope.write(val)
@@ -262,10 +256,6 @@ module Hongbai
       end
     end
 
-    def clock_envelope
-      @envelope.clock
-    end
-
     def clock_sweep_unit
       if @sweep_enabled && @sweep_counter == 0 && valid_period? && @sweep_shift != 0
         # adjust wave length
@@ -284,10 +274,6 @@ module Hongbai
       end
     end
 
-    def clock_length_counter
-      @length_counter.clock
-    end
-
     def sample
       audible? ? @form[@step] * @envelope.volume : 0
     end
@@ -296,8 +282,9 @@ module Hongbai
   class Envelope
     def initialize
       @counter = 0
-      # @envelope_parameter is used as 1. the volume in constant volume,
-      # and 2. the reload value for the counter
+      # @envelope_parameter is used as
+      # 1. the volume in constant volume, and
+      # 2. the reload value for the counter
       @envelope_parameter = @decay_level = 0
       # flags
       @constant = false
@@ -418,10 +405,6 @@ module Hongbai
       end
     end
 
-    def clock_length_counter
-      @length_counter.clock
-    end
-
     def clock_linear_counter
       if @linear_counter_reload
         @linear_counter = @counter_reload_value
@@ -454,7 +437,7 @@ module Hongbai
       @length_counter = LengthCounter.new
     end
 
-    attr_accessor :length_counter
+    attr_accessor :length_counter, :envelope
 
     def write_0(_addr, val)
       @envelope.write val
@@ -480,14 +463,6 @@ module Hongbai
       else
         @timer -= 1
       end
-    end
-
-    def clock_envelope
-      @envelope.clock
-    end
-
-    def clock_length_counter
-      @length_counter.clock
     end
 
     def silenced?

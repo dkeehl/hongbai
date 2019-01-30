@@ -45,6 +45,7 @@ module Hongbai
       @apu = Apu.new(audio, self)
       @dmc = @apu.dmc
       @ppu = Ppu.new(rom, video, self)
+      @ppu_main_loop = @ppu.main_loop
       @cpu = Cpu.new(self)
       @ram = Array.new(0x800, 0)
 
@@ -165,9 +166,9 @@ module Hongbai
       def on_cpu_cycle
         @cycle += 1
         @apu.step
-        @ppu.main_loop.resume
-        @ppu.main_loop.resume
-        @ppu.main_loop.resume
+        @ppu_main_loop.resume
+        @ppu_main_loop.resume
+        @ppu_main_loop.resume
       end
 
       def read_mirror_ram(addr)
