@@ -28,7 +28,7 @@ module Hongbai
         nes.reset
         begin
           t = Time.now
-          loop { nes.step }
+          while true; nes.step end
         ensure
           dur = Time.now - t
           audio.close

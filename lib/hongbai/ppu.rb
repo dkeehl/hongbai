@@ -496,7 +496,7 @@ module Hongbai
         end
 
         n = 1
-        loop do
+        while true
           y = @oam[n * 4]
           @oam2.insert(y)
           if sprite_on_scanline(y)
@@ -595,7 +595,7 @@ module Hongbai
     attr_accessor :has_sprite_zero
 
     def init
-      @arr.map! { 0xff }
+      @arr.fill 0xff
       @cursor = 0
       @openslot = 0
       @push_count = 0
@@ -687,11 +687,13 @@ module Hongbai
     attr_accessor :may_hit_sprite_0
 
     def clear
-      0.step(255) do |n|
+      n = 0
+      while n < 256
         i = @items[n]
         i.color = 0 
         i.from_sprite_0 = nil
         i.above_bg = nil
+        n += 1
       end
     end
 
@@ -702,7 +704,8 @@ module Hongbai
 
     def push_sprite(pattern, x_offset, above_bg, from_sprite_0)
       i = x_offset
-      0.step(7) do |n|
+      n = 0
+      while n < 8
         c = pattern[n]
         item = @items[i]
         if item && item.color == 0
@@ -711,6 +714,7 @@ module Hongbai
           item.above_bg = above_bg
         end
         i += 1
+        n += 1
       end
     end
 
