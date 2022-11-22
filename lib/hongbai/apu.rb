@@ -61,7 +61,7 @@ module Hongbai
       @interrupt_inhibit = false
 
       # For resampling
-      @filter = Filter.new
+      @filter = SimpleFilter.new
       @sampling_counter = 0.0
       @decimation_counter = 0
     end
@@ -591,8 +591,15 @@ module Hongbai
   end
 
   class Mixer
-    PULSE_TABLE = (0..30).map {|n| n == 0 ? 0 : 95.52 / (8128.0 / n + 100) }
-    TND_TABLE = (0..202).map {|n| n == 0 ? 0 : 163.67 / (24329.0 / n + 100) }
+    PULSE_TABLE = (0..30).map do |n|
+      rate = n == 0 ? 0 : 95.52 / (8128.0 / n + 100) 
+      (255.0 * rate).round.to_i
+    end
+
+    TND_TABLE = (0..202).map do |n|
+      rate = n == 0 ? 0 : 163.67 / (24329.0 / n + 100)
+      (255.0 * rate).round.to_i
+    end
 
     def initialize(pulse_1, pulse_2, triangle, noise, dmc)
       @pulse_1 = pulse_1

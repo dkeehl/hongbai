@@ -19,7 +19,8 @@ module Hongbai
                                   SDL2::Window::POS_CENTERED,
                                   SCREEN_WIDTH, SCREEN_HEIGHT, 0)
         video = SDL2::Video.new(win)
-        audio = SDL2::Audio.new(44100, 32, 1)
+        # audio = SDL2::Audio.new(44100, 8, 1)
+        audio = AudioToFile.new
         map = KeyMap.default_1p
         controller = Controller.new(map)
         input = Input.new(controller)
