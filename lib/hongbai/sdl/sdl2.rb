@@ -57,5 +57,22 @@ module Hongbai
     INIT_TIMER = 0x00000001
     INIT_AUDIO = 0x00000010
     INIT_VIDEO = 0x00000020
+
+    class AudioSpec < FFI::Struct
+      layout(
+        :freq,     :int,
+        :format,   :uint16,
+        :channels, :uint8,
+        :silence,  :uint8,
+        :samples,  :uint16,
+        :padding,  :uint16,
+        :size,     :uint32,
+        :callback, :pointer,
+        :userdata, :pointer,
+      )
+    end
+
+    AUDIO_U8 = 0x0008
+    AUDIO_S16LSB = 0x8010
   end
 end

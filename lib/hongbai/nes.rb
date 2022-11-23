@@ -1,6 +1,6 @@
 require_relative 'sdl/sdl2'
 require_relative 'sdl/video'
-require_relative 'sdl/audio'
+require_relative 'backends/audio'
 require_relative 'sdl/event'
 require_relative 'cpu'
 require_relative 'ppu'
@@ -19,8 +19,8 @@ module Hongbai
                                   SDL2::Window::POS_CENTERED,
                                   SCREEN_WIDTH, SCREEN_HEIGHT, 0)
         video = SDL2::Video.new(win)
-        # audio = SDL2::Audio.new(44100, 8, 1)
-        audio = AudioToFile.new
+        audio = Backends::Audio::SDL.new
+        # audio = Backends::Audio::SaveToFile.new
         map = KeyMap.default_1p
         controller = Controller.new(map)
         input = Input.new(controller)

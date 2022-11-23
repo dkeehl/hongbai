@@ -1,5 +1,6 @@
 require_relative 'helper'
-require 'hongbai/sdl/audio'
+require 'hongbai/sdl/sdl2'
+require 'hongbai/backends/audio'
 
 module Hongbai
   class Wav
@@ -64,7 +65,7 @@ module Hongbai
         # meta.each {|k, v| info.concat("#{k}: #{v}\n") }
         # puts(info)
 
-        a = SDL2::Audio.new(meta[:sample_rate], meta[:bit_per_sample], meta[:channels])
+        a = Backends::Audio::SDL.new(meta[:bit_per_sample], meta[:channels], meta[:sample_rate])
         interval = 1 # in seconds
         chunk_size = meta[:data_rate] * interval
         while data = f.read(chunk_size); a.play(data) end
@@ -75,7 +76,7 @@ module Hongbai
 
     def self.test_sound_file
       SDL2.Init(SDL2::INIT_AUDIO)
-      a = SDL2::Audio.new(44100, 8, 1)
+      a = Backends::Audio::SDL.new
       chunk_size = 44100 * 4
       File.open("sound") do |f|
         while data = f.read(chunk_size); a.play(data) end

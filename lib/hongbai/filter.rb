@@ -1,5 +1,5 @@
 module Hongbai
-  class SimpleFilter
+  class Filter
     def initialize
       @a0 = 0
       @a1 = 0
@@ -23,37 +23,7 @@ module Hongbai
       @a0 = input
       ret
     end
-  end
 
-  class AudioToFile
-    BUF_LIMIT = 44110 * 60
-
-    def initialize
-      @buffer = []
-      @file = File.open("sound", "w")
-      @pack = "C*"
-    end
-
-    def process(data)
-      @buffer.concat(data)
-      if @buffer.size > BUF_LIMIT
-        buf = @buffer.pack(@pack)
-        @buffer.clear
-        @file.write(buf)
-      end
-    end
-
-    def close
-      flush
-      @file.close
-    end
-
-    def flush
-      if @buffer.size > 0
-        buf = @buffer.pack(@pack)
-        @buffer.clear
-        @file.write(buf)
-      end
-    end
+    def steps; 8 end
   end
 end

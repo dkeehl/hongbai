@@ -2,11 +2,7 @@ require_relative './filter'
 
 module Hongbai
   class Apu
-    OUTPUT_SAMPLE_RATE = 44.1 # kHz
     NATIVE_SAMPLE_RATE = 1789.773 # kHz
-    FILTER_MUL = 8 # A configuration of this emulator, not of the hardware
-    INTERNAL_SAMPLE_RATE = OUTPUT_SAMPLE_RATE * FILTER_MUL
-    SAMPLE_RATIO = NATIVE_SAMPLE_RATE / INTERNAL_SAMPLE_RATE
 
     # Frame counter sequencer modes
     Step = Struct.new(:cycles,             # Cpu cycles until next step
@@ -61,7 +57,10 @@ module Hongbai
       @interrupt_inhibit = false
 
       # For resampling
-      @filter = SimpleFilter.new
+      @filter = Filter.new
+      out = driver.output_sample_rate
+      @filter_mul = @filter.steps
+      @sample_ratio = NATIVE_SAMPLE_RATE / (out * @filter_mul)
       @sampling_counter = 0.0
       @decimation_counter = 0
     end
@@ -135,13 +134,13 @@ module Hongbai
 
       def clock_output
         @sampling_counter += 1.0
-        return if @sampling_counter < SAMPLE_RATIO
-        @sampling_counter -= SAMPLE_RATIO
+        return if @sampling_counter < @sample_ratio
+        @sampling_counter -= @sample_ratio
         raw = @mixer.sample
         # Resample
         sample = @filter.apply(raw)
         @decimation_counter += 1
-        if @decimation_counter >= FILTER_MUL
+        if @decimation_counter >= @filter_mul
           @decimation_counter = 0
           @buffer << sample
         end
